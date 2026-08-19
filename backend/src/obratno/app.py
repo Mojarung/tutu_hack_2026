@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import chips as chips_module
+from .agent import Agent
 from . import cities as cities_module
 from .ground import MSK, Solution, fmt, fmt_duration, next_day, solve
 from .mcp_client import TutuMcp
@@ -28,6 +30,19 @@ from .schedule import fetch_leg, fetch_station_field
 from .stations import BY_CODE, HOME_DEFAULT, HOME_LAT, HOME_LON, STATIONS
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
+
+
+def agent_settings() -> tuple[str, str, str] | None:
+    """Ключ, эндпоинт и модель агента. / The agent key, endpoint and model."""
+    key = os.getenv("LLM_API_KEY") or os.getenv("OLLAMA_API_KEY")
+    if not key:
+        return None
+    return (
+        key,
+        os.getenv("LLM_BASE_URL", "https://ollama.com/v1"),
+        os.getenv("LLM_MODEL", "gpt-oss:120b"),
+    )
+
 TAXI_RUB_PER_KM = 35
 TAXI_BASE_RUB = 400
 
@@ -384,17 +399,208 @@ async def api_chips(request: Request) -> dict[str, Any]:
     return await chips_module.parse(str(payload.get("text", ""))[:400])
 
 
+def _params(context: dict[str, Any]) -> dict[str, Any]:
+    """Нормализованные условия поиска. / Normalised search limits."""
+    return {
+        "date": context.get("date") or today(),
+        "home": context.get("home") or HOME_DEFAULT,
+        "deadline": int(context.get("deadline") or 22 * 60),
+        "not_before": int(context.get("not_before") or 0),
+        "min_ground": int(context.get("min_ground") or 0),
+        "max_ground": int(context.get("max_ground") or 0),
+        "budget": int(context.get("budget") or 0),
+        "budget_min": int(context.get("budget_min") or 0),
+        "nights": int(context.get("nights") or 0),
+    }
+
+
+def _rank(field: list[dict[str, Any]], limits: dict[str, Any]) -> list[tuple[int, dict, Solution]]:
+    """Кандидаты по убыванию часов на земле. / Candidates by ground time, best first."""
+    ranked: list[tuple[int, dict[str, Any], Solution]] = []
+    for station in field:
+        if not station.get("out") or not station.get("back"):
+            continue
+        answer = solve(
+            station["out"],
+            station["back"],
+            limits["deadline"],
+            limits["min_ground"],
+            limits["not_before"],
+            limits["budget"],
+            limits["max_ground"],
+            limits["budget_min"],
+        )
+        if answer:
+            ranked.append((answer.ground, station, answer))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return ranked
+
+
+def _match(field: list[dict[str, Any]], city: str) -> dict[str, Any] | None:
+    needle = (city or "").strip().lower()
+    if not needle:
+        return None
+    exact = next((s for s in field if s["name"].lower() == needle), None)
+    return exact or next((s for s in field if needle in s["name"].lower()), None)
+
+
+def _toolbox(context: dict[str, Any], carry: dict[str, Any]):
+    """Инструменты агента: считает домен, не модель. / Agent tools, computed by the domain."""
+
+    async def set_params(**kwargs: Any) -> dict[str, Any]:
+        for key, value in kwargs.items():
+            if value is not None and key in _params(context):
+                context[key] = value
+        return {"ok": True, "params": _params(context)}
+
+    async def list_options(limit: int = 8) -> dict[str, Any]:
+        limits = _params(context)
+        ranked = _rank(await build_field(limits["home"], limits["date"]), limits)
+        return {
+            "count": len(ranked),
+            "options": [
+                {
+                    "city": station["name"],
+                    "ground": fmt_duration(ground),
+                    "last_back": fmt(answer.back_dep),
+                    "price": answer_price(station, answer),
+                }
+                for ground, station, answer in ranked[: max(1, min(limit, 10))]
+            ],
+        }
+
+    async def plan_station(city: str) -> dict[str, Any]:
+        limits = _params(context)
+        field = await build_field(limits["home"], limits["date"])
+        station = _match(field, city)
+        if station is None:
+            return {"error": f"города {city} нет среди кандидатов от {limits['home']}"}
+        answer = solve(
+            station["out"],
+            station["back"],
+            limits["deadline"],
+            limits["min_ground"],
+            limits["not_before"],
+            limits["budget"],
+            limits["max_ground"],
+            limits["budget_min"],
+        )
+        if answer is None:
+            last = fmt(max(station["back"], key=lambda r: r[0])[0]) if station["back"] else None
+            return {"city": station["name"], "reachable": False, "last_back": last}
+        card = _ride_card(station, answer)
+        carry["plan"] = {"name": station["name"], "code": station["code"], **card}
+        context["code"] = station["code"]
+        return {"city": station["name"], "reachable": True, **card}
+
+    async def stay_plan(city: str, nights: int) -> dict[str, Any]:
+        limits = _params(context)
+        field = await build_field(limits["home"], limits["date"])
+        station = _match(field, city)
+        if station is None:
+            return {"error": f"города {city} нет среди кандидатов"}
+        context["nights"] = nights
+        candidates = [r for r in station["out"] if r[0] >= limits["not_before"]]
+        out_ride = min(candidates, key=lambda r: r[1]) if candidates else None
+        stay = await _stay_plan(
+            station["code"], limits["date"], nights, limits["deadline"], out_ride
+        )
+        carry["stay"] = stay
+        return stay
+
+    async def escape(city: str) -> dict[str, Any]:
+        limits = _params(context)
+        field = await build_field(limits["home"], limits["date"])
+        station = _match(field, city)
+        if station is None:
+            return {"error": f"города {city} нет среди кандидатов"}
+        result = await _escape(station["code"], limits["date"])
+        carry["escape"] = result
+        return result
+
+    return {
+        "set_params": set_params,
+        "list_options": list_options,
+        "plan_station": plan_station,
+        "stay_plan": stay_plan,
+        "escape": escape,
+    }
+
+
+def answer_price(station: dict[str, Any], answer: Solution) -> int:
+    out_ride = next(
+        (r for r in station["out"] if r[0] == answer.out_dep and r[1] == answer.out_arr), []
+    )
+    back_ride = next(
+        (r for r in station["back"] if r[0] == answer.back_dep and r[1] == answer.back_arr), []
+    )
+    return (out_ride[2] if len(out_ride) > 2 else 0) + (back_ride[2] if len(back_ride) > 2 else 0)
+
+
+def _chips_from(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
+    """Что агент изменил — видно чипами. / What the agent changed, shown as chips."""
+    mapping = {
+        "deadline": "deadline",
+        "min_ground": "min_ground",
+        "max_ground": "max_ground",
+        "budget": "budget",
+        "nights": "nights",
+        "date": "date",
+    }
+    chips: list[dict[str, Any]] = []
+    for key, chip_type in mapping.items():
+        if after.get(key) and after.get(key) != before.get(key):
+            chips.append({"type": chip_type, "value": after[key]})
+    return chips
+
+
 @app.post("/api/chat")
 async def api_chat(request: Request) -> dict[str, Any]:
-    """Диалог поверх той же математики: модель разбирает фразу, план считает домен.
+    """Диалог поверх той же математики.
 
-    RU: Модель меняет только параметры, видимые пользователю. Числа плана она не сочиняет.
-    EN: The model only edits user-visible parameters; it never invents the plan numbers.
+    RU: С ключом работает ReAct-агент: он сам выбирает инструменты. Без ключа тот же запрос
+        разбирает детерминированный парсер, и продукт остаётся полностью рабочим.
+    EN: With a key a ReAct agent picks its own tools. Without one the deterministic parser
+        handles the same request, so the product stays fully functional.
     """
     payload = await request.json()
+    text = str(payload.get("text", ""))[:400]
     context = dict(payload.get("context") or {})
-    parsed = await chips_module.parse(str(payload.get("text", ""))[:400])
+    before = _params(context)
+    carry: dict[str, Any] = {}
 
+    settings = agent_settings()
+    if settings:
+        tools = _toolbox(context, carry)
+        runner = Agent(*settings)
+        summary = json.dumps(before, ensure_ascii=False)
+        try:
+            run = await runner.run(text, summary, tools)
+            after = _params(context)
+            plan = carry.get("plan")
+            ranked = _rank(await build_field(after["home"], after["date"]), after)
+            if plan is None and ranked:
+                ground, station, answer = ranked[0]
+                plan = {"name": station["name"], "code": station["code"], **_ride_card(station, answer)}
+            return {
+                "context": context,
+                "chips": _chips_from(before, after),
+                "source": "agent",
+                "reply": run.reply or "Готово.",
+                "plan": plan,
+                "options": [
+                    {"code": item[1]["code"], "name": item[1]["name"], "ground": fmt_duration(item[0])}
+                    for item in ranked[1:5]
+                ],
+                "trace": [
+                    {"tool": step["tool"], "args": step["args"]} for step in run.trace
+                ],
+                "steps": run.steps,
+            }
+        except Exception as exc:  # деградация до парсера / degrade to the parser
+            carry["agent_error"] = str(exc)[:200]
+
+    parsed = await chips_module.parse(text)
     for chip in parsed["chips"]:
         if chip["type"] == "deadline":
             context["deadline"] = int(chip["value"])
@@ -405,27 +611,8 @@ async def api_chat(request: Request) -> dict[str, Any]:
         elif chip["type"] == "date" and chip["value"] == "tomorrow":
             context["date"] = next_day(context.get("date") or today())
 
-    date = context.get("date") or today()
-    home = context.get("home") or HOME_DEFAULT
-    deadline = int(context.get("deadline") or 22 * 60)
-    min_ground = int(context.get("min_ground") or 0)
-    not_before = int(context.get("not_before") or 0)
-    budget = int(context.get("budget") or 0)
-    max_ground = int(context.get("max_ground") or 0)
-    budget_min = int(context.get("budget_min") or 0)
-
-    field = await build_field(home, date)
-    ranked: list[tuple[int, dict[str, Any], Solution]] = []
-    for station in field:
-        if not station.get("out") or not station.get("back"):
-            continue
-        answer = solve(
-        station["out"], station["back"], deadline, min_ground, not_before, budget, max_ground, budget_min
-    )
-        if answer:
-            ranked.append((answer.ground, station, answer))
-    ranked.sort(key=lambda item: item[0], reverse=True)
-
+    after = _params(context)
+    ranked = _rank(await build_field(after["home"], after["date"]), after)
     chosen = None
     if context.get("code"):
         chosen = next((item for item in ranked if item[1]["code"] == context["code"]), None)
@@ -437,9 +624,10 @@ async def api_chat(request: Request) -> dict[str, Any]:
             "context": context,
             "chips": parsed["chips"],
             "source": parsed["source"],
-            "reply": f"До {fmt(deadline)} вернуться неоткуда. Отодвиньте время или снимите бюджет.",
+            "reply": f"До {fmt(after['deadline'])} вернуться неоткуда. Отодвиньте время или снимите бюджет.",
             "plan": None,
             "options": [],
+            "trace": [],
         }
 
     ground, station, answer = chosen
@@ -454,6 +642,7 @@ async def api_chat(request: Request) -> dict[str, Any]:
             {"code": item[1]["code"], "name": item[1]["name"], "ground": fmt_duration(item[0])}
             for item in ranked[1:5]
         ],
+        "trace": [],
     }
 
 

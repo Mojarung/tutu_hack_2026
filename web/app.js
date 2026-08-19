@@ -458,14 +458,32 @@ function renderChips(chips, source) {
   });
   const note = document.createElement('span');
   note.className = 'chip-source';
-  note.textContent = source === 'llm' ? 'разобрано моделью' : 'разобрано локально';
+  note.textContent = source === 'agent' ? 'агент' : 'разобрано локально';
   host.appendChild(note);
+}
+
+const TOOL_LABELS = {
+  set_params: 'уточнил условия',
+  list_options: 'сравнил города',
+  plan_station: 'собрал маршрут',
+  stay_plan: 'посчитал ночёвку',
+  escape: 'искал ночлег',
+};
+
+/** RU: Видно, что именно делал агент: инструменты, а не пересказ. / EN: the agent's real steps. */
+function traceRow(res) {
+  const trace = res.trace || [];
+  if (!trace.length) return '';
+  const steps = trace.map((s) => `<span>${TOOL_LABELS[s.tool] || s.tool}</span>`).join('');
+  return `<div class="trace">${steps}</div>`;
 }
 
 function showChatPlan(res) {
   const body = $('card-body');
   if (!res.plan) {
-    body.innerHTML = `<h2>Не складывается</h2><p class="asked">«${lastQuestion}»</p><div class="warn">${res.reply}</div>`;
+    body.innerHTML =
+      `<h2>Не складывается</h2><p class="asked">«${lastQuestion}»</p>` +
+      `<div class="warn">${res.reply}</div>${traceRow(res)}`;
     $('card').hidden = false;
     return;
   }
@@ -475,6 +493,7 @@ function showChatPlan(res) {
     <h2>${plan.name}</h2>
     <p class="asked">«${lastQuestion}»</p>
     <p class="sub">${res.reply}</p>
+    ${traceRow(res)}
     <div class="hero"><span class="k">часов на земле</span><div class="big">${plan.ground_label}</div></div>
     ${planLegRow('туда', plan.out)}
     ${planLegRow('обратно, последняя', plan.back)}

@@ -285,3 +285,12 @@ html, body {
   box-shadow: var(--shadow-soft); cursor: grab; pointer-events: auto;
 }
 .range input[type='range']:active::-webkit-slider-thumb { background: var(--brand); cursor: grabbing; }
+
+
+/* Шаги агента: что он реально вызвал. */
+.trace { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.trace span {
+  padding: 5px 12px; border-radius: var(--r-pill);
+  background: var(--paper); border: 1px solid var(--hairline);
+  font: 500 11px/1 Onest, sans-serif; color: var(--ink-soft);
+}
