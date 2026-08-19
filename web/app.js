@@ -108,14 +108,17 @@ map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom
 
 /* ---------- шайбы / pucks ---------- */
 function buildPuck(station) {
+  /* RU: MapLibre владеет transform внешнего элемента, GSAP — только внутренним.
+     EN: MapLibre owns the root transform, GSAP animates the inner node only. */
+  const root = document.createElement('div');
   const el = document.createElement('div');
   el.className = 'puck';
-  el.style.position = 'relative';
   el.innerHTML =
     '<div class="puck-halo"></div><div class="puck-dot"></div>' +
     `<div class="puck-ring" hidden></div><span class="puck-name">${station.name}</span>`;
-  el.addEventListener('click', () => openCard(station.code));
-  const marker = new maplibregl.Marker({ element: el }).setLngLat([station.lon, station.lat]).addTo(map);
+  root.appendChild(el);
+  root.addEventListener('click', () => openCard(station.code));
+  const marker = new maplibregl.Marker({ element: root }).setLngLat([station.lon, station.lat]).addTo(map);
   const dot = el.querySelector('.puck-dot');
   const halo = el.querySelector('.puck-halo');
   const ring = el.querySelector('.puck-ring');
@@ -628,13 +631,6 @@ function loadField() {
   };
 }
 
-window.addEventListener('error', (event) => {
-  const el = $('boot');
-  el.hidden = false;
-  el.style.background = '#E8734A';
-  $('boot-text').textContent = `сбой интерфейса: ${event.message}`;
-});
-
 async function start() {
   const meta = await fetch('/api/stations').then((r) => r.json());
   state.today = meta.today;
@@ -677,11 +673,38 @@ async function start() {
     renderDates();
     loadField();
   });
+  const gateHome = $('gate-home');
+  gateHome.innerHTML = select.innerHTML;
+  gateHome.value = select.value;
+  $('gate-date').value = state.date;
+  $('gate-date').min = state.today;
   renderDates();
   renderGround();
   renderBudget();
   renderDial();
-  loadField();
+
+  $('gate-go').addEventListener('click', () => {
+    state.home = gateHome.value;
+    localStorage.setItem('obratno.home', state.home);
+    select.value = state.home;
+    state.date = $('gate-date').value || state.today;
+    dateInput.value = state.date;
+    const [hh, mm] = ($('gate-time').value || '22:00').split(':').map(Number);
+    let deadline = hh * 60 + mm;
+    if (deadline < MIN_DEADLINE) deadline += 24 * 60;
+    setDeadline(deadline, false);
+    renderDates();
+    gsap.to($('gate'), {
+      opacity: 0,
+      duration: 0.4,
+      ease: 'power2.out',
+      onComplete: () => {
+        $('gate').hidden = true;
+        map.resize();
+        loadField();
+      },
+    });
+  });
 }
 
 start();

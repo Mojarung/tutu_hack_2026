@@ -69,6 +69,17 @@
   <span class="legend-item legend-note"><i class="ring"></i>окно ответа Tutu</span>
 </div>
 
+<section class="gate" id="gate">
+  <div class="gate-card">
+    <h1 class="gate-title">Обратно</h1>
+    <p class="gate-sub">карта времени на земле</p>
+    <label class="pill gate-field"><span class="gate-k">откуда</span><select id="gate-home"></select></label>
+    <label class="pill gate-field"><span class="gate-k">дата отъезда</span><input id="gate-date" type="date" /></label>
+    <label class="pill gate-field"><span class="gate-k">дома к</span><input id="gate-time" type="time" value="22:00" step="300" /></label>
+    <button class="pill gate-go" id="gate-go" type="button">искать</button>
+  </div>
+</section>
+
 <div class="boot" id="boot"><span id="boot-text">веер расписаний</span></div>
 
 <script src="./vendor/gsap.min.js"></script>
