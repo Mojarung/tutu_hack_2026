@@ -75,6 +75,19 @@ async def build_field(home: str, date: str) -> list[dict[str, Any]]:
 app = FastAPI(title="Обратно", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def no_store(request: Request, call_next):
+    """Страница и скрипты не кэшируются: демо всегда показывает свежую сборку.
+
+    RU: Иначе браузер отдаёт старый app.js и правка выглядит как невыполненная.
+    EN: Otherwise the browser serves a stale app.js and a fix looks like it never landed.
+    """
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/") and "/vendor/" not in request.url.path:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/api/stations")
 async def api_stations() -> dict[str, Any]:
     return {
