@@ -134,7 +134,7 @@ function buildPuck(station) {
 function paint(code) {
   const data = state.stations.get(code);
   const puck = state.markers.get(code);
-  if (!data || !puck) return null;
+  if (!data || !puck || data.isHome) return null;
   const answer =
     data.out && data.back
       ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore, state.budget)
@@ -167,6 +167,12 @@ let counterTween = { v: 0 };
 function repaintAll() {
   let reachable = 0;
   for (const code of state.stations.keys()) if (paint(code)) reachable += 1;
+  $('counter-total').textContent = String(
+    [...state.stations.values()].filter((item) => !item.isHome).length,
+  );
+  $('counter-total').textContent = String(
+    [...state.stations.values()].filter((item) => !item.isHome).length,
+  );
   gsap.to(counterTween, {
     v: reachable,
     duration: 0.4,
@@ -515,11 +521,35 @@ function refreshNotBefore() {
   state.notBefore = now.getHours() * 60 + now.getMinutes();
 }
 
+/** RU: Один веер за раз: прошлый поток закрывается, иначе два ответа перезаписывают друг друга.
+ *  EN: One fan at a time: the previous stream is closed, else two answers overwrite each other. */
+let fieldStream = null;
+
+function resetField() {
+  state.stations.forEach((value, code) => {
+    const puck = state.markers.get(code);
+    const isHome = value.name === state.home;
+    if (puck) {
+      if (isHome) puck.marker.remove();
+      else puck.marker.addTo(map);
+    }
+    state.stations.set(code, { ...value, out: null, back: null, window: null, isHome });
+  });
+  counterTween.v = 0;
+  $('counter-num').textContent = '0';
+  $('card').hidden = true;
+  state.selected = null;
+}
+
 function loadField() {
   refreshNotBefore();
+  if (fieldStream) fieldStream.close();
+  resetField();
   boot('веер расписаний');
   let done = 0;
+  const total = [...state.stations.values()].filter((item) => !item.isHome).length;
   const source = new EventSource(`/api/field/stream?home=${encodeURIComponent(state.home)}&date=${state.date}`);
+  fieldStream = source;
   source.addEventListener('station', (event) => {
     const data = JSON.parse(event.data);
     const previous = state.stations.get(data.code) || {};
@@ -530,7 +560,7 @@ function loadField() {
       gsap.to(puck.el, { scale: 1, opacity: 1, duration: 0.5, ease: 'back.out(1.6)' });
     }
     done += 1;
-    boot(`веер расписаний · ${done} из ${state.markers.size}`);
+    boot(`веер расписаний · ${done} из ${total}`);
     repaintAll();
   });
   source.addEventListener('done', () => {
@@ -581,6 +611,12 @@ async function start() {
   const dateInput = $('date-input');
   dateInput.value = state.date;
   dateInput.min = state.today;
+  dateInput.closest('.pill').addEventListener('click', () => {
+    if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
+  });
+  dateInput.closest('.pill').addEventListener('click', () => {
+    if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
+  });
   dateInput.addEventListener('change', () => {
     if (!dateInput.value) return;
     state.date = dateInput.value;
