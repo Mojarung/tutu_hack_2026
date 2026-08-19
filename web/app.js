@@ -456,6 +456,7 @@ $('card-close').addEventListener('click', () => {
 /* ---------- чипы / chips ---------- */
 /** RU: Диалог правит параметры, план считает домен. / EN: chat edits params, domain computes. */
 let chatContext = {};
+let lastQuestion = '';
 
 $('ask').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -473,6 +474,7 @@ $('ask').addEventListener('submit', async (e) => {
     not_before: state.notBefore,
     budget: state.budget,
   };
+  lastQuestion = text;
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -500,6 +502,7 @@ function showChatPlan(res) {
   state.selected = plan.code;
   body.innerHTML = `
     <h2>${plan.name}</h2>
+    <p class="asked">«${lastQuestion}»</p>
     <p class="sub">${res.reply}</p>
     <div class="hero"><span class="k">часов на земле</span><div class="big">${plan.ground_label}</div></div>
     ${planLegRow('туда', plan.out)}
@@ -728,6 +731,13 @@ async function start() {
   $('gate-rdate').value = state.date;
   $('gate-rdate').min = state.today;
   $('gate-dtime').value = `${pad(Math.floor(departure / 60))}:${pad(departure % 60)}`;
+  const homeBy = departure + 6 * 60;
+  $('gate-time').value = `${pad(Math.floor(homeBy / 60) % 24)}:${pad(homeBy % 60)}`;
+  if (homeBy >= 24 * 60) {
+    const nextDay = new Date(`${state.date}T00:00:00`);
+    nextDay.setDate(nextDay.getDate() + 1);
+    $('gate-rdate').value = nextDay.toISOString().slice(0, 10);
+  }
   $('gate-city-name').textContent = state.home;
 
   const pickCity = (city) => {
