@@ -5,7 +5,7 @@
  *     no network call at all, exactly as the spec demands.
  */
 
-import maplibregl from './vendor/maplibre-gl.mjs';
+import * as maplibregl from './vendor/maplibre-gl.mjs';
 
 const MIN_DEADLINE = 12 * 60;
 const MAX_DEADLINE = 27 * 60;
@@ -543,6 +543,13 @@ function loadField() {
     boot(null);
   };
 }
+
+window.addEventListener('error', (event) => {
+  const el = $('boot');
+  el.hidden = false;
+  el.style.background = '#E8734A';
+  $('boot-text').textContent = `сбой интерфейса: ${event.message}`;
+});
 
 async function start() {
   const meta = await fetch('/api/stations').then((r) => r.json());
