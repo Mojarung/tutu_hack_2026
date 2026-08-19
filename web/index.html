@@ -48,8 +48,22 @@
       <span class="gate-pair"><input id="gate-rdate" type="date" /><input id="gate-time" type="time" step="300" /></span>
     </label>
 
-    <div class="gate-group"><span class="gate-k">побыть хотя бы</span><div class="pill-group" id="ground"></div></div>
-    <div class="gate-group"><span class="gate-k">билеты туда-обратно</span><div class="pill-group" id="budget"></div></div>
+    <div class="gate-group">
+      <div class="range-head"><span class="gate-k">побыть там</span><span id="ground-label">любое время</span></div>
+      <div class="range" id="ground-range">
+        <div class="range-track"><div class="range-fill"></div></div>
+        <input class="range-a" type="range" min="0" max="720" step="30" value="0" aria-label="Побыть от" />
+        <input class="range-b" type="range" min="0" max="720" step="30" value="720" aria-label="Побыть до" />
+      </div>
+    </div>
+    <div class="gate-group">
+      <div class="range-head"><span class="gate-k">билеты туда-обратно</span><span id="budget-label">любые</span></div>
+      <div class="range" id="budget-range">
+        <div class="range-track"><div class="range-fill"></div></div>
+        <input class="range-a" type="range" min="0" max="3000" step="100" value="0" aria-label="Билеты от" />
+        <input class="range-b" type="range" min="0" max="3000" step="100" value="3000" aria-label="Билеты до" />
+      </div>
+    </div>
 
     <button class="pill gate-go" id="gate-go" type="button">искать</button>
   </div>

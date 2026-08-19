@@ -22,8 +22,10 @@ const state = {
   date: null,
   notBefore: 8 * 60,
   deadline: 22 * 60,
-  minGround: 0,
-  budget: 0,
+  groundMin: 0,
+  groundMax: 720,
+  budgetMin: 0,
+  budgetMax: 3000,
   nights: 0,
   stations: new Map(),
   markers: new Map(),
@@ -44,18 +46,21 @@ const dayMonth = (iso) => `${iso.slice(8)}.${iso.slice(5, 7)}`;
 /* ---------- домен / domain ---------- */
 
 /** RU: Та же математика, что в backend/src/obratno/ground.py. / EN: mirrors ground.py. */
-function solve(out, back, deadline, minGround, notBefore = 0, budget = 0) {
+function solve(out, back, deadline, limits) {
+  const { groundMin = 0, groundMax = Infinity, notBefore = 0, priceMin = 0, priceMax = Infinity } =
+    limits || {};
   const candidates = back.filter((r) => r[1] <= deadline).sort((a, b) => b[1] - a[1]);
   for (const [backDep, backArr, backPrice = 0] of candidates) {
     let best = null;
     for (const [outDep, outArr, outPrice = 0] of out) {
       if (outDep < notBefore || outArr > backDep) continue;
-      if (budget && outPrice + backPrice > budget) continue;
+      const total = outPrice + backPrice;
+      if (total > priceMax || total < priceMin) continue;
       if (best === null || outArr < best.arr) best = { dep: outDep, arr: outArr, price: outPrice };
     }
     if (best === null) continue;
     const ground = backDep - best.arr;
-    if (ground >= minGround) {
+    if (ground >= groundMin && ground <= groundMax) {
       return {
         outDep: best.dep,
         outArr: best.arr,
@@ -67,6 +72,17 @@ function solve(out, back, deadline, minGround, notBefore = 0, budget = 0) {
     }
   }
   return null;
+}
+
+/** RU: Пределы поиска одним объектом, обе границы. / EN: search limits, both bounds. */
+function limits() {
+  return {
+    groundMin: state.groundMin,
+    groundMax: state.groundMax >= 720 ? Infinity : state.groundMax,
+    notBefore: state.notBefore,
+    priceMin: state.budgetMin,
+    priceMax: state.budgetMax >= 3000 ? Infinity : state.budgetMax,
+  };
 }
 
 function rampColor(minutes) {
@@ -137,7 +153,7 @@ function paint(code) {
   if (!data || !puck) return null;
   const answer =
     data.out && data.back
-      ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore, state.budget)
+      ? solve(data.out, data.back, state.deadline, limits())
       : null;
   const size = answer ? 16 + Math.min(answer.ground, 480) * (46 / 480) : 12;
   const color = answer ? rampColor(answer.ground) : DEAD;
@@ -184,32 +200,42 @@ function groupButtons(host, items, isOn, onPick) {
   });
 }
 
-const GROUND_ITEMS = [
-  { v: 0, label: 'любое' },
-  { v: 60, label: '1 ч' },
-  { v: 120, label: '2 ч' },
-  { v: 240, label: '4 ч' },
-  { v: 360, label: '6 ч' },
-];
-const BUDGET_ITEMS = [
-  { v: 0, label: 'любые' },
-  { v: 400, label: '400 ₽' },
-  { v: 800, label: '800 ₽' },
-  { v: 1500, label: '1500 ₽' },
-];
+/** RU: Двусторонний ползунок: две ручки на одной дорожке.
+ *  EN: Dual range control: two thumbs on one track. */
+function dualRange(hostId, labelId, format, onChange) {
+  const host = document.getElementById(hostId);
+  const a = host.querySelector('.range-a');
+  const b = host.querySelector('.range-b');
+  const fill = host.querySelector('.range-fill');
+  const max = Number(a.max);
 
-function renderGround() {
-  groupButtons($('ground'), GROUND_ITEMS, (i) => i.v === state.minGround, (i) => {
-    state.minGround = i.v;
-    renderGround();
-  });
+  const sync = () => {
+    let low = Number(a.value);
+    let high = Number(b.value);
+    if (low > high) [low, high] = [high, low];
+    fill.style.left = (low / max) * 100 + '%';
+    fill.style.right = 100 - (high / max) * 100 + '%';
+    document.getElementById(labelId).textContent = format(low, high);
+    onChange(low, high);
+  };
+
+  a.addEventListener('input', sync);
+  b.addEventListener('input', sync);
+  sync();
 }
 
-function renderBudget() {
-  groupButtons($('budget'), BUDGET_ITEMS, (i) => i.v === state.budget, (i) => {
-    state.budget = i.v;
-    renderBudget();
-  });
+function groundLabel(low, high) {
+  if (low === 0 && high >= 720) return 'любое время';
+  if (high >= 720) return 'от ' + fmtDur(low);
+  if (low === 0) return 'до ' + fmtDur(high);
+  return fmtDur(low) + ' — ' + fmtDur(high);
+}
+
+function budgetLabel(low, high) {
+  if (low === 0 && high >= 3000) return 'любые';
+  if (high >= 3000) return 'от ' + low + ' ₽';
+  if (low === 0) return 'до ' + high + ' ₽';
+  return low + ' — ' + high + ' ₽';
 }
 
 /* ---------- выбор города / city picker ---------- */
@@ -305,7 +331,7 @@ function openCard(code, silent = false) {
   state.selected = code;
   const answer =
     data.out && data.back
-      ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore, state.budget)
+      ? solve(data.out, data.back, state.deadline, limits())
       : null;
   const body = $('card-body');
   const truncated = data.window === 'truncated';
@@ -349,7 +375,10 @@ async function loadStay(code) {
   host.innerHTML = '<div class="muted">считаем проживание и обратный рейс…</div>';
   const url =
     `/api/plan?code=${code}&date=${state.date}&deadline=${state.deadline}` +
-    `&not_before=${state.notBefore}&nights=${state.nights}&home=${encodeURIComponent(state.home)}`;
+    `&not_before=${state.notBefore}&nights=${state.nights}&min_ground=${state.groundMin}` +
+    `&max_ground=${state.groundMax >= 720 ? 0 : state.groundMax}` +
+    `&budget=${state.budgetMax >= 3000 ? 0 : state.budgetMax}&budget_min=${state.budgetMin}` +
+    `&home=${encodeURIComponent(state.home)}`;
   const res = await fetch(url).then((r) => r.json());
   const stay = res.stay;
   if (!stay || !$('stay')) return;
@@ -476,9 +505,11 @@ $('ask').addEventListener('submit', async (e) => {
     home: state.home,
     date: state.date,
     deadline: state.deadline,
-    min_ground: state.minGround,
+    min_ground: state.groundMin,
+    max_ground: state.groundMax >= 720 ? 0 : state.groundMax,
     not_before: state.notBefore,
-    budget: state.budget,
+    budget: state.budgetMax >= 3000 ? 0 : state.budgetMax,
+    budget_min: state.budgetMin,
   };
   const res = await fetch('/api/chat', {
     method: 'POST',
@@ -488,7 +519,7 @@ $('ask').addEventListener('submit', async (e) => {
   boot(null);
   chatContext = res.context || chatContext;
   if (chatContext.deadline) state.deadline = chatContext.deadline;
-  if (typeof chatContext.min_ground === 'number') state.minGround = chatContext.min_ground;
+  if (typeof chatContext.min_ground === 'number') state.groundMin = chatContext.min_ground;
   repaintAll();
   renderChips(res.chips || [], res.source);
   showChatPlan(res);
@@ -635,8 +666,14 @@ async function start() {
     pickTimer = setTimeout(() => renderPicker(e.target.value), 140);
   });
 
-  renderGround();
-  renderBudget();
+  dualRange('ground-range', 'ground-label', groundLabel, (low, high) => {
+    state.groundMin = low;
+    state.groundMax = high;
+  });
+  dualRange('budget-range', 'budget-label', budgetLabel, (low, high) => {
+    state.budgetMin = low;
+    state.budgetMax = high;
+  });
   if (new URLSearchParams(location.search).has('go')) startSearch();
 }
 

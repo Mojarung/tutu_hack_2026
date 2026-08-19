@@ -342,6 +342,8 @@ async def api_plan(
     min_ground: int = 0,
     not_before: int = 0,
     budget: int = 0,
+    max_ground: int = 0,
+    budget_min: int = 0,
     nights: int = 0,
     home: str = HOME_DEFAULT,
 ) -> dict[str, Any]:
@@ -351,7 +353,9 @@ async def api_plan(
     station = _find(field, code)
     if station is None:
         return {"error": "unknown station"}
-    answer = solve(station["out"], station["back"], deadline, min_ground, not_before, budget)
+    answer = solve(
+        station["out"], station["back"], deadline, min_ground, not_before, budget, max_ground, budget_min
+    )
     body: dict[str, Any] = {
         "code": code,
         "name": station["name"],
@@ -407,13 +411,17 @@ async def api_chat(request: Request) -> dict[str, Any]:
     min_ground = int(context.get("min_ground") or 0)
     not_before = int(context.get("not_before") or 0)
     budget = int(context.get("budget") or 0)
+    max_ground = int(context.get("max_ground") or 0)
+    budget_min = int(context.get("budget_min") or 0)
 
     field = await build_field(home, date)
     ranked: list[tuple[int, dict[str, Any], Solution]] = []
     for station in field:
         if not station.get("out") or not station.get("back"):
             continue
-        answer = solve(station["out"], station["back"], deadline, min_ground, not_before, budget)
+        answer = solve(
+        station["out"], station["back"], deadline, min_ground, not_before, budget, max_ground, budget_min
+    )
         if answer:
             ranked.append((answer.ground, station, answer))
     ranked.sort(key=lambda item: item[0], reverse=True)

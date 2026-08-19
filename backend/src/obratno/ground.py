@@ -52,6 +52,8 @@ def solve(
     min_ground: int = 0,
     not_before: int = 0,
     budget: int = 0,
+    max_ground: int = 0,
+    budget_min: int = 0,
 ) -> Solution | None:
     """Сшивает поездку туда с самым поздним возвратом до дедлайна.
 
@@ -70,13 +72,18 @@ def solve(
             out_price = out_ride[2] if len(out_ride) > 2 else 0
             if out_dep < not_before or out_arr > back_dep:
                 continue
-            if budget and out_price + back_price > budget:
+            total = out_price + back_price
+            if budget and total > budget:
+                continue
+            if budget_min and total < budget_min:
                 continue
             if best_arr is None or out_arr < best_arr:
                 best_arr, best_dep = out_arr, out_dep
         if best_arr is None:
             continue
         ground = back_dep - best_arr
+        if max_ground and ground > max_ground:
+            continue
         if ground >= min_ground:
             return Solution(best_dep, best_arr, back_dep, back_arr, ground)
     return None

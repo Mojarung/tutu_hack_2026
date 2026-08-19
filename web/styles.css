@@ -258,3 +258,30 @@ html, body {
   .chatbar { left: 12px; right: 12px; bottom: 12px; width: auto; }
   .edit-btn { top: 12px; left: 12px; }
 }
+
+
+/* Двусторонний ползунок: обе границы задаются пальцем. */
+.range-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 6px; }
+.range-head span:last-child { font: 600 14px/1 Onest, sans-serif; color: var(--ink); }
+.range { position: relative; height: 44px; padding: 0 12px; }
+.range-track {
+  position: absolute; left: 12px; right: 12px; top: 20px; height: 6px;
+  background: var(--paper); border: 1px solid var(--hairline); border-radius: var(--r-pill);
+}
+.range-fill { position: absolute; top: -1px; bottom: -1px; border-radius: var(--r-pill); background: var(--brand); }
+.range input[type='range'] {
+  position: absolute; left: 12px; top: 10px; width: calc(100% - 24px);
+  margin: 0; height: 26px; background: none; appearance: none; pointer-events: none;
+}
+.range input[type='range']:focus-visible { outline: none; }
+.range input[type='range']::-webkit-slider-thumb {
+  appearance: none; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--surface); border: 3px solid var(--brand);
+  box-shadow: var(--shadow-soft); cursor: grab; pointer-events: auto;
+}
+.range input[type='range']::-moz-range-thumb {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--surface); border: 3px solid var(--brand);
+  box-shadow: var(--shadow-soft); cursor: grab; pointer-events: auto;
+}
+.range input[type='range']:active::-webkit-slider-thumb { background: var(--brand); cursor: grabbing; }
