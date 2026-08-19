@@ -166,13 +166,9 @@ function paint(code) {
   return answer;
 }
 
-let counterTween = { v: 0 };
 function repaintAll() {
   let reachable = 0;
   for (const code of state.stations.keys()) if (paint(code)) reachable += 1;
-  $('counter-total').textContent = String(
-    [...state.stations.values()].filter((item) => !item.isHome).length,
-  );
   const node = $('reachable');
   if (node) node.textContent = String(reachable);
   if (state.selected) openCard(state.selected, true);
@@ -586,7 +582,6 @@ function resetField() {
     }
     state.stations.set(code, { ...value, out: null, back: null, window: null, isHome });
   });
-  counterTween.v = 0;
   $('card').hidden = true;
   state.selected = null;
 }
