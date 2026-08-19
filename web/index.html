@@ -24,10 +24,7 @@
       <input id="date-input" type="date" aria-label="Дата" />
     </label>
   </div>
-  <div class="counter" id="counter">
-    <span class="counter-num" id="counter-num">0</span>
-    <span class="counter-of">из <span id="counter-total">38</span><br>успеваю вернуться</span>
-  </div>
+
 </header>
 
 <section class="hud hud-bottom">
@@ -42,7 +39,7 @@
       </g>
     </svg>
     <div class="dial-face">
-      <span class="dial-label">дома к</span>
+      <span class="dial-label"><b id="reachable">0</b> городов успеваю</span>
       <span class="dial-time" id="dial-time">22:00</span>
     </div>
   </div>
@@ -52,7 +49,7 @@
     <div class="pill-group" id="budget"></div>
     <form class="ask" id="ask">
       <input id="ask-input" type="text" autocomplete="off"
-             placeholder="хочу погулять полдня, вернуться до полуночи" />
+             placeholder="хочу погулять полдня, дома к 23:00" />
       <button class="pill pill-go" type="submit" aria-label="Разобрать">→</button>
     </form>
     <div class="chips" id="chips" hidden></div>

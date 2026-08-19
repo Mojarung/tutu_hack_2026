@@ -311,6 +311,75 @@ async def api_chips(request: Request) -> dict[str, Any]:
     return await chips_module.parse(str(payload.get("text", ""))[:400])
 
 
+@app.post("/api/chat")
+async def api_chat(request: Request) -> dict[str, Any]:
+    """Диалог поверх той же математики: модель разбирает фразу, план считает домен.
+
+    RU: Модель меняет только параметры, видимые пользователю. Числа плана она не сочиняет.
+    EN: The model only edits user-visible parameters; it never invents the plan numbers.
+    """
+    payload = await request.json()
+    context = dict(payload.get("context") or {})
+    parsed = await chips_module.parse(str(payload.get("text", ""))[:400])
+
+    for chip in parsed["chips"]:
+        if chip["type"] == "deadline":
+            context["deadline"] = int(chip["value"])
+        elif chip["type"] == "min_ground":
+            context["min_ground"] = int(chip["value"])
+        elif chip["type"] == "station":
+            context["code"] = chip["value"]
+        elif chip["type"] == "date" and chip["value"] == "tomorrow":
+            context["date"] = next_day(context.get("date") or today())
+
+    date = context.get("date") or today()
+    home = context.get("home") or HOME_DEFAULT
+    deadline = int(context.get("deadline") or 22 * 60)
+    min_ground = int(context.get("min_ground") or 0)
+    not_before = int(context.get("not_before") or 0)
+    budget = int(context.get("budget") or 0)
+
+    field = await build_field(home, date)
+    ranked: list[tuple[int, dict[str, Any], Solution]] = []
+    for station in field:
+        if not station.get("out") or not station.get("back"):
+            continue
+        answer = solve(station["out"], station["back"], deadline, min_ground, not_before, budget)
+        if answer:
+            ranked.append((answer.ground, station, answer))
+    ranked.sort(key=lambda item: item[0], reverse=True)
+
+    chosen = None
+    if context.get("code"):
+        chosen = next((item for item in ranked if item[1]["code"] == context["code"]), None)
+    if chosen is None and ranked:
+        chosen = ranked[0]
+
+    if chosen is None:
+        return {
+            "context": context,
+            "chips": parsed["chips"],
+            "source": parsed["source"],
+            "reply": f"До {fmt(deadline)} вернуться неоткуда. Отодвиньте время или снимите бюджет.",
+            "plan": None,
+            "options": [],
+        }
+
+    ground, station, answer = chosen
+    context["code"] = station["code"]
+    return {
+        "context": context,
+        "chips": parsed["chips"],
+        "source": parsed["source"],
+        "reply": f"{station['name']}: {fmt_duration(ground)} на земле, последняя обратно {fmt(answer.back_dep)}.",
+        "plan": {"name": station["name"], "code": station["code"], **_ride_card(station, answer)},
+        "options": [
+            {"code": item[1]["code"], "name": item[1]["name"], "ground": fmt_duration(item[0])}
+            for item in ranked[1:5]
+        ],
+    }
+
+
 @app.post("/api/alice")
 async def api_alice(request: Request) -> dict[str, Any]:
     """Один факт — один ответ. / One fact, one answer."""

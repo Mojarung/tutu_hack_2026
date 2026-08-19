@@ -170,15 +170,13 @@ function repaintAll() {
   $('counter-total').textContent = String(
     [...state.stations.values()].filter((item) => !item.isHome).length,
   );
-  $('counter-total').textContent = String(
-    [...state.stations.values()].filter((item) => !item.isHome).length,
-  );
   gsap.to(counterTween, {
     v: reachable,
     duration: 0.4,
     ease: 'power1.out',
     onUpdate: () => {
-      $('counter-num').textContent = Math.round(counterTween.v);
+      const node = $('reachable');
+      if (node) node.textContent = String(Math.round(counterTween.v));
     },
   });
   if (state.selected) openCard(state.selected, true);
@@ -433,17 +431,74 @@ $('card-close').addEventListener('click', () => {
 });
 
 /* ---------- чипы / chips ---------- */
+/** RU: Диалог правит параметры, план считает домен. / EN: chat edits params, domain computes. */
+let chatContext = {};
+
 $('ask').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const text = $('ask-input').value.trim();
+  const input = $('ask-input');
+  const text = input.value.trim();
   if (!text) return;
-  const res = await fetch('/api/chips', {
+  input.value = '';
+  boot('считаем план');
+  chatContext = {
+    ...chatContext,
+    home: state.home,
+    date: state.date,
+    deadline: state.deadline,
+    min_ground: state.minGround,
+    not_before: state.notBefore,
+    budget: state.budget,
+  };
+  const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, context: chatContext }),
   }).then((r) => r.json());
+  boot(null);
+  chatContext = res.context || chatContext;
+  if (chatContext.deadline) setDeadline(chatContext.deadline, false);
+  if (typeof chatContext.min_ground === 'number') state.minGround = chatContext.min_ground;
+  renderGround();
+  repaintAll();
   renderChips(res.chips || [], res.source);
+  showChatPlan(res);
 });
+
+function showChatPlan(res) {
+  const card = $('card');
+  const body = $('card-body');
+  if (!res.plan) {
+    body.innerHTML = `<h2>Не складывается</h2><div class="warn">${res.reply}</div>`;
+    card.hidden = false;
+    return;
+  }
+  const plan = res.plan;
+  state.selected = plan.code;
+  body.innerHTML = `
+    <h2>${plan.name}</h2>
+    <p class="sub">${res.reply}</p>
+    <div class="hero"><span class="k">часов на земле</span><div class="big">${plan.ground_label}</div></div>
+    <div class="row"><span class="k">туда</span><span class="v">${plan.out.dep} → ${plan.out.arr}</span></div>
+    <div class="row"><span class="k">быть на платформе</span><span class="v">${plan.back.dep}</span></div>
+    <div class="row"><span class="k">дома</span><span class="v">${plan.back.arr}</span></div>
+    ${plan.buffer.map((r) => `<div class="row"><span class="k">запас</span><span class="v">${r.dep} → ${r.arr}</span></div>`).join('')}
+    ${res.options.length ? `<p class="sub" style="margin:16px 0 6px">ещё варианты</p><div class="pill-group" id="opts"></div>` : ''}
+    <p class="muted" style="margin-top:14px">Напишите правку в строке снизу: «хочу подольше», «дома к 23:00», «во Владимир».</p>`;
+  if (res.options.length) {
+    groupButtons(
+      $('opts'),
+      res.options.map((o) => ({ ...o, label: `${o.name} · ${o.ground}` })),
+      () => false,
+      (o) => {
+        chatContext.code = o.code;
+        openCard(o.code);
+      },
+    );
+  }
+  card.hidden = false;
+  gsap.fromTo(card, { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'expo.out' });
+}
 
 function chipLabel(chip) {
   if (chip.type === 'deadline') return `дома к ${fmt(chip.value)}`;
@@ -536,7 +591,6 @@ function resetField() {
     state.stations.set(code, { ...value, out: null, back: null, window: null, isHome });
   });
   counterTween.v = 0;
-  $('counter-num').textContent = '0';
   $('card').hidden = true;
   state.selected = null;
 }
@@ -630,4 +684,4 @@ async function start() {
   loadField();
 }
 
-map.on('load', start);
+start();
