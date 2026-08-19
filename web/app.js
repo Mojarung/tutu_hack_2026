@@ -636,8 +636,6 @@ async function start() {
   state.today = meta.today;
   state.date = meta.today;
   state.home = meta.home.name;
-  $('home-name').textContent = meta.home.name;
-  $('counter-total').textContent = String(meta.stations.length);
   meta.stations.forEach((station) => {
     state.stations.set(station.code, station);
     state.markers.set(station.code, buildPuck(station));
@@ -683,7 +681,7 @@ async function start() {
   renderBudget();
   renderDial();
 
-  $('gate-go').addEventListener('click', () => {
+  const startSearch = () => {
     state.home = gateHome.value;
     localStorage.setItem('obratno.home', state.home);
     select.value = state.home;
@@ -700,11 +698,12 @@ async function start() {
       ease: 'power2.out',
       onComplete: () => {
         $('gate').hidden = true;
-        map.resize();
         loadField();
       },
     });
-  });
+  };
+  $('gate-go').addEventListener('click', startSearch);
+  if (new URLSearchParams(location.search).has('go')) startSearch();
 }
 
 start();
