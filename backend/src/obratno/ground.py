@@ -51,19 +51,26 @@ def solve(
     deadline: int,
     min_ground: int = 0,
     not_before: int = 0,
+    budget: int = 0,
 ) -> Solution | None:
     """Сшивает поездку туда с самым поздним возвратом до дедлайна.
 
     RU: out и back — пары [отправление, прибытие]. Возвращает None, если поездка не складывается.
     EN: out and back are [departure, arrival] pairs. Returns None when no trip fits.
     """
-    for back_dep, back_arr in sorted(back, key=lambda r: r[1], reverse=True):
+    for ride in sorted(back, key=lambda r: r[1], reverse=True):
+        back_dep, back_arr = ride[0], ride[1]
+        back_price = ride[2] if len(ride) > 2 else 0
         if back_arr > deadline:
             continue
         best_arr: int | None = None
         best_dep = 0
-        for out_dep, out_arr in out:
+        for out_ride in out:
+            out_dep, out_arr = out_ride[0], out_ride[1]
+            out_price = out_ride[2] if len(out_ride) > 2 else 0
             if out_dep < not_before or out_arr > back_dep:
+                continue
+            if budget and out_price + back_price > budget:
                 continue
             if best_arr is None or out_arr < best_arr:
                 best_arr, best_dep = out_arr, out_dep

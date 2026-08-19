@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Unbounded:wght@500;600&display=swap" rel="stylesheet" />
-<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@6.4.1/dist/maplibre-gl.css" rel="stylesheet" />
+<link href="./vendor/maplibre-gl.css" rel="stylesheet" />
 <link href="./styles.css" rel="stylesheet" />
 </head>
 <body>
@@ -15,14 +15,18 @@
 
 <header class="hud hud-top">
   <div class="cluster">
-    <button class="pill pill-home" id="home-btn" type="button">
-      <span class="dot-home"></span><span id="home-name">Москва</span>
-    </button>
+    <label class="pill pill-home">
+      <span class="dot-home"></span>
+      <select id="home-select" aria-label="Откуда"></select>
+    </label>
     <div class="pill-group" id="dates"></div>
+    <label class="pill pill-date">
+      <input id="date-input" type="date" aria-label="Дата" />
+    </label>
   </div>
   <div class="counter" id="counter">
     <span class="counter-num" id="counter-num">0</span>
-    <span class="counter-of">из <span id="counter-total">38</span></span>
+    <span class="counter-of">из <span id="counter-total">38</span><br>успеваю вернуться</span>
   </div>
 </header>
 
@@ -45,6 +49,7 @@
 
   <div class="controls">
     <div class="pill-group" id="ground"></div>
+    <div class="pill-group" id="budget"></div>
     <form class="ask" id="ask">
       <input id="ask-input" type="text" autocomplete="off"
              placeholder="хочу погулять полдня, вернуться до полуночи" />
@@ -69,8 +74,7 @@
 
 <div class="boot" id="boot"><span id="boot-text">веер расписаний</span></div>
 
-<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@6.4.1/dist/maplibre-gl.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+<script src="./vendor/gsap.min.js"></script>
 <script src="./app.js" type="module"></script>
 </body>
 </html>

@@ -27,7 +27,7 @@ CACHE_TTL = 12 * 3600
 
 
 def _cache_path(origin: str, destination: str, date: str) -> Path:
-    key = f"{origin}__{destination}__{date}".replace(" ", "_").replace("/", "-")
+    key = f"v2__{origin}__{destination}__{date}".replace(" ", "_").replace("/", "-")
     return CACHE_DIR / f"{key}.json"
 
 
@@ -86,7 +86,8 @@ async def fetch_leg(mcp: TutuMcp, origin: str, destination: str, date: str) -> d
             arr = to_minutes(offer["arrival_at"], date)
         except Exception:
             continue
-        rides.append([dep, arr])
+        price = round(float((offer.get("price") or {}).get("amount") or 0))
+        rides.append([dep, arr, price])
         if from_name is None:
             leg = (offer.get("legs") or [{}])[0]
             segment = (leg.get("segments") or [{}])[0]

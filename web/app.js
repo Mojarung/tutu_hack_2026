@@ -5,6 +5,8 @@
  *     no network call at all, exactly as the spec demands.
  */
 
+import maplibregl from './vendor/maplibre-gl.mjs';
+
 const MIN_DEADLINE = 12 * 60;
 const MAX_DEADLINE = 27 * 60;
 const RAMP = [
@@ -23,6 +25,8 @@ const state = {
   deadline: 22 * 60,
   minGround: 0,
   notBefore: 0,
+  budget: 0,
+  nights: 0,
   stations: new Map(),
   markers: new Map(),
   selected: null,
@@ -39,21 +43,29 @@ const fmtDur = (m) => {
 };
 
 /** RU: Та же математика, что в backend/src/obratno/ground.py. / EN: mirrors ground.py. */
-function solve(out, back, deadline, minGround, notBefore = 0) {
+function solve(out, back, deadline, minGround, notBefore = 0, budget = 0) {
   const candidates = back.filter((r) => r[1] <= deadline).sort((a, b) => b[1] - a[1]);
-  for (const [backDep, backArr] of candidates) {
+  for (const [backDep, backArr, backPrice = 0] of candidates) {
     let bestArr = null;
     let bestDep = 0;
-    for (const [outDep, outArr] of out) {
+    let bestPrice = 0;
+    for (const [outDep, outArr, outPrice = 0] of out) {
       if (outDep < notBefore || outArr > backDep) continue;
+      if (budget && outPrice + backPrice > budget) continue;
       if (bestArr === null || outArr < bestArr) {
         bestArr = outArr;
         bestDep = outDep;
+        bestPrice = outPrice;
       }
     }
     if (bestArr === null) continue;
     const ground = backDep - bestArr;
-    if (ground >= minGround) return { outDep: bestDep, outArr: bestArr, backDep, backArr, ground };
+    if (ground >= minGround) {
+      return {
+        outDep: bestDep, outArr: bestArr, backDep, backArr, ground,
+        price: bestPrice + backPrice,
+      };
+    }
   }
   return null;
 }
@@ -125,7 +137,7 @@ function paint(code) {
   if (!data || !puck) return null;
   const answer =
     data.out && data.back
-      ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore)
+      ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore, state.budget)
       : null;
   const size = answer ? 16 + Math.min(answer.ground, 480) * (46 / 480) : 12;
   const color = answer ? rampColor(answer.ground) : DEAD;
@@ -259,6 +271,7 @@ function renderDates() {
     (i) => i.iso === state.date,
     (i) => {
       state.date = i.iso;
+      $('date-input').value = i.iso;
       renderDates();
       loadField();
     },
@@ -285,12 +298,26 @@ function renderGround() {
   );
 }
 
+const BUDGET_ITEMS = [
+  { v: 0, label: 'любой' },
+  { v: 400, label: 'до 400 ₽' },
+  { v: 800, label: 'до 800 ₽' },
+  { v: 1500, label: 'до 1500 ₽' },
+];
+function renderBudget() {
+  groupButtons($('budget'), BUDGET_ITEMS, (i) => i.v === state.budget, (i) => {
+    state.budget = i.v;
+    renderBudget();
+    repaintAll();
+  });
+}
+
 /* ---------- карточка обрыва / cliff card ---------- */
 async function openCard(code, silent = false) {
   state.selected = code;
   const data = state.stations.get(code);
   const answer = data.out
-    ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore)
+    ? solve(data.out, data.back, state.deadline, state.minGround, state.notBefore, state.budget)
     : null;
   const card = $('card');
   const body = $('card-body');
@@ -324,14 +351,56 @@ async function openCard(code, silent = false) {
       <div id="escape" class="muted" style="margin-top:12px">ищем, где переночевать…</div>`;
     if (!silent) loadEscape(code);
   }
+  body.insertAdjacentHTML(
+    'beforeend',
+    `<div class="row"><span class="k">остаться на</span><span class="pill-group" id="nights"></span></div><div id="stay"></div>`,
+  );
+  groupButtons(
+    $('nights'),
+    [{ v: 0, label: 'без ночёвки' }, { v: 1, label: '1 ночь' }, { v: 2, label: '2 ночи' }],
+    (i) => i.v === state.nights,
+    (i) => {
+      state.nights = i.v;
+      openCard(code, true);
+      if (i.v > 0) loadStay(code);
+    },
+  );
+  if (state.nights > 0) loadStay(code);
   card.hidden = false;
   if (!silent) gsap.fromTo(card, { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'expo.out' });
+}
+
+async function loadStay(code) {
+  const host = $('stay');
+  if (!host) return;
+  host.innerHTML = '<div class="muted">считаем проживание и обратный рейс…</div>';
+  const url =
+    `/api/plan?code=${code}&date=${state.date}&deadline=${state.deadline}` +
+    `&not_before=${state.notBefore}&nights=${state.nights}&home=${encodeURIComponent(state.home)}`;
+  const res = await fetch(url).then((r) => r.json());
+  const stay = res.stay;
+  if (!stay || !$('stay')) return;
+  const hotel = stay.hotels[0];
+  const dm = (iso) => `${iso.slice(8)}.${iso.slice(5, 7)}`;
+  $('stay').innerHTML = `
+    ${stay.out ? `<div class="row"><span class="k">туда ${dm(state.date)}</span><span class="v">${stay.out.dep} → ${stay.out.arr}</span></div>` : ''}
+    ${hotel
+      ? `<div class="hotel"><div style="flex:1">
+           <a href="${hotel.checkout_url}" target="_blank" rel="noopener">${hotel.name}</a>
+           <div class="muted">${hotel.room || ''}${hotel.walk_min ? ` · ${hotel.walk_min} мин пешком (оценка по координатам)` : ''}</div>
+         </div><div class="v">${hotel.price ? `${Math.round(hotel.price)} ₽` : 'Tutu не вернул цену'}</div></div>
+         <div class="muted">${stay.price_note}</div>`
+      : '<div class="muted">Tutu не вернул отели в этом городе</div>'}
+    ${stay.back
+      ? `<div class="row"><span class="k">обратно ${dm(stay.back_date)}</span><span class="v">${stay.back.dep} → ${stay.back.arr}</span></div>
+         <div class="row"><span class="k">всего на земле</span><span class="v">${stay.ground_label || ''}</span></div>`
+      : `<div class="warn">В этот день обратно до ${fmt(state.deadline)} ничего нет</div>`}`;
 }
 
 async function loadEscape(code) {
   const url =
     `/api/plan?code=${code}&date=${state.date}&deadline=${state.deadline}` +
-    `&not_before=${state.notBefore}`;
+    `&not_before=${state.notBefore}&budget=${state.budget}&home=${encodeURIComponent(state.home)}`;
   const res = await fetch(url).then((r) => r.json());
   const host = $('escape');
   if (!host || !res.escape) return;
@@ -487,8 +556,33 @@ async function start() {
     state.markers.set(station.code, buildPuck(station));
   });
   new maplibregl.Marker({ color: '#16143c' }).setLngLat([meta.home.lon, meta.home.lat]).addTo(map);
+  const select = $('home-select');
+  select.innerHTML = '';
+  [{ name: meta.home.name }, ...meta.stations].forEach((item) => {
+    const option = document.createElement('option');
+    option.value = item.name;
+    option.textContent = item.name;
+    select.appendChild(option);
+  });
+  select.value = localStorage.getItem('obratno.home') || meta.home.name;
+  state.home = select.value;
+  select.addEventListener('change', () => {
+    state.home = select.value;
+    localStorage.setItem('obratno.home', state.home);
+    loadField();
+  });
+  const dateInput = $('date-input');
+  dateInput.value = state.date;
+  dateInput.min = state.today;
+  dateInput.addEventListener('change', () => {
+    if (!dateInput.value) return;
+    state.date = dateInput.value;
+    renderDates();
+    loadField();
+  });
   renderDates();
   renderGround();
+  renderBudget();
   renderDial();
   loadField();
 }

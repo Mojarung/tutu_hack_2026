@@ -233,3 +233,12 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Откуда, дата, бюджет — те же круглые кнопки. / Origin, date, budget as round controls. */
+.pill-home select,
+.pill-date input {
+  border: 0; background: none; color: var(--ink);
+  font: 600 15px/1 Onest, sans-serif; cursor: pointer;
+}
+.pill-home select:focus-visible, .pill-date input:focus-visible { outline: none; }
+.pill-date input { font-variant-numeric: tabular-nums; }

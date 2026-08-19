@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from . import chips as chips_module
 from .ground import MSK, Solution, fmt, fmt_duration, next_day, solve
 from .mcp_client import TutuMcp
-from .schedule import fetch_station_field
+from .schedule import fetch_leg, fetch_station_field
 from .stations import BY_CODE, HOME_DEFAULT, HOME_LAT, HOME_LON, STATIONS
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
@@ -204,6 +204,67 @@ async def _escape(code: str, date: str) -> dict[str, Any]:
     }
 
 
+async def _stay_plan(
+    code: str, date: str, nights: int, deadline: int, out_ride: list[int] | None
+) -> dict[str, Any]:
+    """План с ночёвкой: обратный рейс в день отъезда плюс проживание.
+
+    RU: Обратное расписание берётся на дату отъезда, отель — на весь период одним запросом,
+        цена приходит уже за весь период (price_basis stay_total) и не умножается на ночи.
+    EN: The return leg is fetched for the departure date and the hotel for the whole stay,
+        whose price is already a stay total and is never multiplied by the nights.
+    """
+    station = BY_CODE[code]
+    back_date = date
+    for _ in range(nights):
+        back_date = next_day(back_date)
+
+    leg = await fetch_leg(mcp(), station.name, HOME_DEFAULT, back_date)
+    rides = [r for r in leg["rides"] if r[1] <= deadline]
+    back = max(rides, key=lambda r: r[0]) if rides else None
+
+    hotels: list[dict[str, Any]] = []
+    try:
+        payload = await mcp().call(
+            "search_hotels",
+            {"city_name": station.name, "check_in": date, "check_out": back_date, "page_size": 4},
+        )
+        for hotel in payload.get("hotels") or []:
+            location = hotel.get("location") or {}
+            offer = hotel.get("best_offer") or {}
+            distance = (
+                _km(station.lat, station.lon, location["lat"], location["lng"])
+                if location.get("lat") and location.get("lng")
+                else None
+            )
+            hotels.append(
+                {
+                    "name": hotel.get("name"),
+                    "price": (offer.get("price") or {}).get("amount"),
+                    "room": offer.get("room_name"),
+                    "free_cancellation": offer.get("free_cancellation"),
+                    "checkout_url": hotel.get("checkout_url"),
+                    "walk_min": round(distance / 5 * 60) if distance is not None else None,
+                }
+            )
+        hotels.sort(key=lambda h: (h["price"] is None, h["price"] or 0))
+    except Exception:
+        hotels = []
+
+    ground = None
+    if back and out_ride:
+        ground = back[0] + nights * 24 * 60 - out_ride[1]
+    return {
+        "nights": nights,
+        "back_date": back_date,
+        "back": {"dep": fmt(back[0]), "arr": fmt(back[1])} if back else None,
+        "back_window": leg["window"],
+        "ground_label": fmt_duration(ground) if ground else None,
+        "hotels": hotels[:3],
+        "price_note": "цена отеля уже за весь период, Tutu отдаёт stay_total",
+    }
+
+
 @app.get("/api/plan")
 async def api_plan(
     code: str,
@@ -211,6 +272,8 @@ async def api_plan(
     deadline: int = 22 * 60,
     min_ground: int = 0,
     not_before: int = 0,
+    budget: int = 0,
+    nights: int = 0,
     home: str = HOME_DEFAULT,
 ) -> dict[str, Any]:
     """Карточка обрыва. / The cliff card."""
@@ -219,7 +282,7 @@ async def api_plan(
     station = _find(field, code)
     if station is None:
         return {"error": "unknown station"}
-    answer = solve(station["out"], station["back"], deadline, min_ground, not_before)
+    answer = solve(station["out"], station["back"], deadline, min_ground, not_before, budget)
     body: dict[str, Any] = {
         "code": code,
         "name": station["name"],
@@ -229,7 +292,15 @@ async def api_plan(
     }
     if answer:
         body["ride"] = _ride_card(station, answer)
-    else:
+    if nights > 0:
+        out_ride = None
+        candidates = [r for r in station["out"] if r[0] >= not_before]
+        if candidates:
+            out_ride = min(candidates, key=lambda r: r[1])
+        body["stay"] = await _stay_plan(code, date, nights, deadline, out_ride)
+        if out_ride:
+            body["stay"]["out"] = {"dep": fmt(out_ride[0]), "arr": fmt(out_ride[1])}
+    elif not answer:
         body["escape"] = await _escape(code, date)
     return body
 
