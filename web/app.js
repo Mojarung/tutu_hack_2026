@@ -28,7 +28,7 @@ const state = {
   groundMax: GROUND_MAX,
   budgetMin: 0,
   budgetMax: PRICE_MAX,
-  nights: 0,
+  backDate: null,
   stations: new Map(),
   markers: new Map(),
   selected: null,
@@ -307,28 +307,6 @@ function planLegRow(title, leg) {
     </div>`;
 }
 
-const NIGHTS_ITEMS = [
-  { v: 0, label: 'без ночёвки' },
-  { v: 1, label: '1 ночь' },
-  { v: 2, label: '2 ночи' },
-];
-
-function nightsBlock() {
-  return `
-    <div class="row"><span class="k">остаться на</span><span class="pill-group" id="nights"></span></div>
-    <div id="stay"></div>`;
-}
-
-function wireNights(code) {
-  groupButtons($('nights'), NIGHTS_ITEMS, (i) => i.v === state.nights, (i) => {
-    state.nights = i.v;
-    if (i.v > 0) loadStay(code);
-    else if ($('stay')) $('stay').innerHTML = '';
-    wireNights(code);
-  });
-  if (state.nights > 0) loadStay(code);
-}
-
 function openCard(code, silent = false) {
   const data = state.stations.get(code);
   if (!data) return;
@@ -356,60 +334,68 @@ function openCard(code, silent = false) {
       <div class="row"><span class="k">билеты туда-обратно</span><span class="v">${answer.price || 0} ₽</span></div>
       ${truncated ? `<div class="warn">Tutu отдаёт первые 300 рейсов, дальше ${fmt(lastBack)} расписания нет</div>` : ''}
       ${data.checkout_url ? `<a class="pill buy" href="${data.checkout_url}" target="_blank" rel="noopener">расписание на Tutu</a>` : ''}
-      ${nightsBlock()}`;
+      <div id="routes"></div>`;
   } else {
     body.innerHTML = `
       <h2>${data.name}</h2>
       <div class="warn">Обратно к ${fmt(state.deadline)} никак</div>
       <p class="muted" style="margin:10px 0 0">Последняя обратно ${lastBack !== null ? fmt(lastBack) : 'не найдена'}.</p>
       <div id="escape" class="muted" style="margin-top:12px">ищем, где переночевать…</div>
-      ${nightsBlock()}`;
+      <div id="routes"></div>`;
     if (!silent) loadEscape(code);
   }
-  wireNights(code);
+  loadRoutes(code);
   $('card').hidden = false;
   if (!silent) {
     gsap.fromTo($('card'), { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'expo.out' });
   }
 }
 
-async function loadStay(code) {
-  const host = $('stay');
+/** RU: Все рейсы за выбранные даты плюс отели, если поездка с ночевкой.
+ *  EN: Every ride for the chosen dates, plus hotels when the trip spans days. */
+async function loadRoutes(code) {
+  const host = document.getElementById('routes');
   if (!host) return;
-  host.innerHTML = '<div class="muted">считаем проживание и обратный рейс…</div>';
-  const url =
-    `/api/plan?code=${code}&date=${state.date}&deadline=${state.deadline}` +
-    `&not_before=${state.notBefore}&nights=${state.nights}&min_ground=${state.groundMin}` +
+  host.innerHTML = '<div class="muted">загружаем все рейсы…</div>';
+  const res = await fetch(planUrl(code)).then((r) => r.json());
+  if (!document.getElementById('routes')) return;
+  const routes = res.routes || { out: [], back: [] };
+  const hotels = (res.stay || res.escape || {}).hotels || [];
+  const list = (title, legs) =>
+    `<details class="routes" ${legs.length && legs.length <= 12 ? 'open' : ''}>
+       <summary>${title} · ${legs.length}</summary>
+       ${legs.map((leg) => planLegRow(leg.dep, leg)).join('') || '<div class="muted">Tutu не вернул рейсы</div>'}
+     </details>`;
+  host.innerHTML =
+    list(`все рейсы туда ${dayMonth(res.date)}`, routes.out) +
+    list(`все рейсы обратно ${dayMonth(res.back_date)}`, routes.back) +
+    (hotels.length
+      ? `<details class="routes" open><summary>где ночевать · ${hotels.length}</summary>` +
+        hotels
+          .map(
+            (h) => `<div class="hotel"><div style="flex:1">
+              <a href="${h.checkout_url}" target="_blank" rel="noopener">${h.name}</a>
+              <div class="muted">${h.room || ''}${h.walk_min ? ` · ${h.walk_min} мин пешком (оценка по координатам)` : ''}</div>
+            </div><div class="v">${h.price ? `${Math.round(h.price)} ₽` : 'Tutu не вернул цену'}</div></div>`,
+          )
+          .join('') +
+        '</details>'
+      : '');
+}
+
+function planUrl(code) {
+  return (
+    `/api/plan?code=${code}&date=${state.date}&back_date=${state.backDate}` +
+    `&deadline=${state.deadline}&not_before=${state.notBefore}&min_ground=${state.groundMin}` +
     `&max_ground=${state.groundMax >= GROUND_MAX ? 0 : state.groundMax}` +
     `&budget=${state.budgetMax >= PRICE_MAX ? 0 : state.budgetMax}&budget_min=${state.budgetMin}` +
-    `&home=${encodeURIComponent(state.home)}`;
-  const res = await fetch(url).then((r) => r.json());
-  const stay = res.stay;
-  if (!stay || !$('stay')) return;
-  const hotel = stay.hotels[0];
-  $('stay').innerHTML = `
-    ${stay.out ? `<div class="row"><span class="k">туда ${dayMonth(state.date)}</span><span class="v">${stay.out.dep} → ${stay.out.arr}</span></div>` : ''}
-    ${
-      hotel
-        ? `<div class="hotel"><div style="flex:1">
-             <a href="${hotel.checkout_url}" target="_blank" rel="noopener">${hotel.name}</a>
-             <div class="muted">${hotel.room || ''}${hotel.walk_min ? ` · ${hotel.walk_min} мин пешком (оценка по координатам)` : ''}</div>
-           </div><div class="v">${hotel.price ? `${Math.round(hotel.price)} ₽` : 'Tutu не вернул цену'}</div></div>
-           <div class="muted">${stay.price_note}</div>`
-        : '<div class="muted">Tutu не вернул отели в этом городе</div>'
-    }
-    ${
-      stay.back
-        ? `<div class="row"><span class="k">обратно ${dayMonth(stay.back_date)}</span><span class="v">${stay.back.dep} → ${stay.back.arr}</span></div>
-           <div class="row"><span class="k">всего на земле</span><span class="v">${stay.ground_label || ''}</span></div>`
-        : `<div class="warn">В этот день обратно до ${fmt(state.deadline)} ничего нет</div>`
-    }`;
+    `&home=${encodeURIComponent(state.home)}`
+  );
 }
 
 async function loadEscape(code) {
-  const url = `/api/plan?code=${code}&date=${state.date}&deadline=${state.deadline}&home=${encodeURIComponent(state.home)}`;
-  const res = await fetch(url).then((r) => r.json());
-  const host = $('escape');
+  const res = await fetch(planUrl(code)).then((r) => r.json());
+  const host = document.getElementById('escape');
   if (!host || !res.escape) return;
   const { hotels, taxi, buses } = res.escape;
   host.innerHTML = `
@@ -501,7 +487,7 @@ function showChatPlan(res) {
     <div class="row"><span class="k">билеты туда-обратно</span><span class="v">${plan.price_total || 0} ₽</span></div>
     ${plan.checkout_url ? `<a class="pill buy" href="${plan.checkout_url}" target="_blank" rel="noopener">расписание на Tutu</a>` : ''}
     ${res.options.length ? `<p class="sub" style="margin:16px 0 6px">ещё варианты</p><div class="pill-group" id="opts"></div>` : ''}
-    ${nightsBlock()}`;
+    <div id="routes"></div>`;
   if (res.options.length) {
     groupButtons(
       $('opts'),
@@ -510,7 +496,7 @@ function showChatPlan(res) {
       (o) => openCard(o.code),
     );
   }
-  wireNights(plan.code);
+  loadRoutes(plan.code);
   $('card').hidden = false;
   gsap.fromTo($('card'), { y: 24, opacity: 0 }, { y: 0, opacity: 1, duration: 0.45, ease: 'expo.out' });
 }
@@ -527,6 +513,7 @@ $('ask').addEventListener('submit', async (e) => {
     ...chatContext,
     home: state.home,
     date: state.date,
+    back_date: state.backDate,
     deadline: state.deadline,
     min_ground: state.groundMin,
     max_ground: state.groundMax >= GROUND_MAX ? 0 : state.groundMax,
@@ -542,6 +529,8 @@ $('ask').addEventListener('submit', async (e) => {
   boot(null);
   chatContext = res.context || chatContext;
   if (chatContext.deadline) state.deadline = chatContext.deadline;
+  if (chatContext.date) state.date = chatContext.date;
+  if (chatContext.back_date) state.backDate = chatContext.back_date;
   if (typeof chatContext.min_ground === 'number') state.groundMin = chatContext.min_ground;
   repaintAll();
   renderChips(res.chips || [], res.source);
@@ -572,7 +561,8 @@ function loadField() {
   let done = 0;
   const total = state.stations.size;
   const source = new EventSource(
-    `/api/field/stream?home=${encodeURIComponent(state.home)}&date=${state.date}`,
+    `/api/field/stream?home=${encodeURIComponent(state.home)}&date=${state.date}` +
+      `&back_date=${state.backDate}`,
   );
   fieldStream = source;
   source.addEventListener('station', (event) => {
@@ -639,6 +629,7 @@ async function startSearch() {
         86400000,
     ),
   );
+  state.backDate = $('gate-rdate').value || state.date;
   state.notBefore = dh * 60 + dm;
   state.deadline = days * 24 * 60 + ah * 60 + am;
   if (state.deadline <= state.notBefore) state.deadline += 24 * 60;
@@ -654,6 +645,7 @@ async function start() {
   const meta = await loadStations(saved);
   state.today = meta.today;
   state.date = meta.today;
+  state.backDate = meta.today;
 
   const now = new Date();
   const departure = Math.min(

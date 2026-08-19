@@ -294,3 +294,14 @@ html, body {
   background: var(--paper); border: 1px solid var(--hairline);
   font: 500 11px/1 Onest, sans-serif; color: var(--ink-soft);
 }
+
+
+/* Все рейсы за выбранные даты. */
+.routes { margin-top: 14px; }
+.routes summary {
+  cursor: pointer; list-style: none; padding: 10px 16px;
+  border-radius: var(--r-pill); background: var(--paper);
+  font: 600 13px/1 Onest, sans-serif; color: var(--ink);
+}
+.routes summary::-webkit-details-marker { display: none; }
+.routes[open] summary { margin-bottom: 4px; }

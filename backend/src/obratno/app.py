@@ -77,13 +77,14 @@ async def _warm(date: str) -> None:
         pass
 
 
-async def build_field(home: str, date: str) -> list[dict[str, Any]]:
-    key = f"{home}|{date}"
+async def build_field(home: str, date: str, back_date: str | None = None) -> list[dict[str, Any]]:
+    back_date = back_date or date
+    key = f"{home}|{date}|{back_date}"
     if key in _fields:
         return _fields[key]
     results = await asyncio.gather(
         *[
-            fetch_station_field(mcp(), home, station, date)
+            fetch_station_field(mcp(), home, station, date, back_date)
             for station in cities_module.destinations(home)
         ]
     )
@@ -141,18 +142,27 @@ async def api_cities(q: str = "", limit: int = 60) -> dict[str, Any]:
 
 
 @app.get("/api/field")
-async def api_field(home: str = HOME_DEFAULT, date: str = "") -> dict[str, Any]:
+async def api_field(home: str = HOME_DEFAULT, date: str = "", back_date: str = "") -> dict[str, Any]:
     date = date or today()
-    return {"home": home, "date": date, "stations": await build_field(home, date)}
+    back_date = back_date or date
+    return {
+        "home": home,
+        "date": date,
+        "back_date": back_date,
+        "stations": await build_field(home, date, back_date),
+    }
 
 
 @app.get("/api/field/stream")
-async def api_field_stream(home: str = HOME_DEFAULT, date: str = "") -> StreamingResponse:
+async def api_field_stream(
+    home: str = HOME_DEFAULT, date: str = "", back_date: str = ""
+) -> StreamingResponse:
     """Веер по мере ответов. / The fan, streamed as answers land."""
     target = date or today()
+    target_back = back_date or target
 
     async def gen():
-        key = f"{home}|{target}"
+        key = f"{home}|{target}|{target_back}"
         if key in _fields:
             for item in _fields[key]:
                 yield f"event: station\ndata: {json.dumps(item, ensure_ascii=False)}\n\n"
@@ -160,7 +170,7 @@ async def api_field_stream(home: str = HOME_DEFAULT, date: str = "") -> Streamin
             return
         collected: list[dict[str, Any]] = []
         tasks = [
-            asyncio.create_task(fetch_station_field(mcp(), home, station, target))
+            asyncio.create_task(fetch_station_field(mcp(), home, station, target, target_back))
             for station in cities_module.destinations(home)
         ]
         for task in asyncio.as_completed(tasks):
@@ -232,7 +242,7 @@ def _km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 6371 * 2 * math.asin(math.sqrt(a))
 
 
-async def _escape(code: str, date: str) -> dict[str, Any]:
+async def _escape(code: str, date: str, back_date: str | None = None) -> dict[str, Any]:
     """Лестница спасения: одно честное состояние. / Escape ladder: one honest state."""
     station = _station_by_code(code, HOME_DEFAULT)
     hotels: list[dict[str, Any]] = []
@@ -243,7 +253,7 @@ async def _escape(code: str, date: str) -> dict[str, Any]:
             {
                 "city_name": station.name,
                 "check_in": date,
-                "check_out": next_day(date),
+                "check_out": back_date if back_date and back_date != date else next_day(date),
                 "page_size": 4,
             },
         )
@@ -288,115 +298,63 @@ async def _escape(code: str, date: str) -> dict[str, Any]:
     }
 
 
-async def _stay_plan(
-    code: str, date: str, nights: int, deadline: int, out_ride: list[int] | None
-) -> dict[str, Any]:
-    """План с ночёвкой: обратный рейс в день отъезда плюс проживание.
-
-    RU: Обратное расписание берётся на дату отъезда, отель — на весь период одним запросом,
-        цена приходит уже за весь период (price_basis stay_total) и не умножается на ночи.
-    EN: The return leg is fetched for the departure date and the hotel for the whole stay,
-        whose price is already a stay total and is never multiplied by the nights.
-    """
-    station = BY_CODE[code]
-    back_date = date
-    for _ in range(nights):
-        back_date = next_day(back_date)
-
-    leg = await fetch_leg(mcp(), station.name, HOME_DEFAULT, back_date)
-    rides = [r for r in leg["rides"] if r[1] <= deadline]
-    back = max(rides, key=lambda r: r[0]) if rides else None
-
-    hotels: list[dict[str, Any]] = []
-    try:
-        payload = await mcp().call(
-            "search_hotels",
-            {"city_name": station.name, "check_in": date, "check_out": back_date, "page_size": 4},
-        )
-        for hotel in payload.get("hotels") or []:
-            location = hotel.get("location") or {}
-            offer = hotel.get("best_offer") or {}
-            distance = (
-                _km(station.lat, station.lon, location["lat"], location["lng"])
-                if location.get("lat") and location.get("lng")
-                else None
-            )
-            hotels.append(
-                {
-                    "name": hotel.get("name"),
-                    "price": (offer.get("price") or {}).get("amount"),
-                    "room": offer.get("room_name"),
-                    "free_cancellation": offer.get("free_cancellation"),
-                    "checkout_url": hotel.get("checkout_url"),
-                    "walk_min": round(distance / 5 * 60) if distance is not None else None,
-                }
-            )
-        hotels.sort(key=lambda h: (h["price"] is None, h["price"] or 0))
-    except Exception:
-        hotels = []
-
-    ground = None
-    if back and out_ride:
-        ground = back[0] + nights * 24 * 60 - out_ride[1]
-    return {
-        "nights": nights,
-        "back_date": back_date,
-        "back": {"dep": fmt(back[0]), "arr": fmt(back[1])} if back else None,
-        "back_window": leg["window"],
-        "ground_label": fmt_duration(ground) if ground else None,
-        "hotels": hotels[:3],
-        "price_note": "цена отеля уже за весь период, Tutu отдаёт stay_total",
-    }
-
-
 @app.get("/api/plan")
 async def api_plan(
     code: str,
     date: str = "",
+    back_date: str = "",
     deadline: int = 22 * 60,
     min_ground: int = 0,
     not_before: int = 0,
     budget: int = 0,
     max_ground: int = 0,
     budget_min: int = 0,
-    nights: int = 0,
     home: str = HOME_DEFAULT,
 ) -> dict[str, Any]:
-    """Карточка обрыва. / The cliff card."""
+    """Карточка маршрута: лучший вариант и все рейсы за выбранные даты.
+
+    RU: «Все рейсы» — это буквально всё, что Tutu отдал по паре на эти даты, отфильтрованное
+        только временем отъезда и дедлайном возвращения.
+    EN: "All rides" means everything Tutu returned for the pair on those dates, filtered only
+        by the departure time and the return deadline.
+    """
     date = date or today()
-    field = await build_field(home, date)
+    back_date = back_date or date
+    field = await build_field(home, date, back_date)
     station = _find(field, code)
     if station is None:
         return {"error": "unknown station"}
     answer = solve(
-        station["out"], station["back"], deadline, min_ground, not_before, budget, max_ground, budget_min
+        station["out"], station["back"], deadline, min_ground, not_before, budget,
+        max_ground, budget_min,
     )
     body: dict[str, Any] = {
         "code": code,
         "name": station["name"],
         "window": station["window"],
-        "back_total": station.get("back_total"),
+        "date": date,
+        "back_date": back_date,
+        "routes": {
+            "out": [
+                _leg(r, station.get("from_name"), station.get("to_name"))
+                for r in station["out"]
+                if r[0] >= not_before
+            ],
+            "back": [
+                _leg(r, station.get("back_from_name"), station.get("back_to_name"))
+                for r in station["back"]
+                if r[1] <= deadline
+            ],
+        },
         "last_known_back": fmt(station["back"][-1][0]) if station["back"] else None,
     }
     if answer:
         body["ride"] = _ride_card(station, answer)
-    if nights > 0:
-        out_ride = None
-        candidates = [r for r in station["out"] if r[0] >= not_before]
-        if candidates:
-            out_ride = min(candidates, key=lambda r: r[1])
-        body["stay"] = await _stay_plan(code, date, nights, deadline, out_ride)
-        if out_ride:
-            body["stay"]["out"] = {"dep": fmt(out_ride[0]), "arr": fmt(out_ride[1])}
-    elif not answer:
-        body["escape"] = await _escape(code, date)
+    else:
+        body["escape"] = await _escape(code, date, back_date)
+    if back_date != date:
+        body["stay"] = await _escape(code, date, back_date)
     return body
-
-
-@app.post("/api/chips")
-async def api_chips(request: Request) -> dict[str, Any]:
-    payload = await request.json()
-    return await chips_module.parse(str(payload.get("text", ""))[:400])
 
 
 def _params(context: dict[str, Any]) -> dict[str, Any]:
@@ -410,7 +368,7 @@ def _params(context: dict[str, Any]) -> dict[str, Any]:
         "max_ground": int(context.get("max_ground") or 0),
         "budget": int(context.get("budget") or 0),
         "budget_min": int(context.get("budget_min") or 0),
-        "nights": int(context.get("nights") or 0),
+        "back_date": context.get("back_date") or context.get("date") or today(),
     }
 
 
@@ -455,7 +413,7 @@ def _toolbox(context: dict[str, Any], carry: dict[str, Any]):
 
     async def list_options(limit: int = 8) -> dict[str, Any]:
         limits = _params(context)
-        ranked = _rank(await build_field(limits["home"], limits["date"]), limits)
+        ranked = _rank(await build_field(limits["home"], limits["date"], limits["back_date"]), limits)
         return {
             "count": len(ranked),
             "options": [
@@ -471,7 +429,7 @@ def _toolbox(context: dict[str, Any], carry: dict[str, Any]):
 
     async def plan_station(city: str) -> dict[str, Any]:
         limits = _params(context)
-        field = await build_field(limits["home"], limits["date"])
+        field = await build_field(limits["home"], limits["date"], limits["back_date"])
         station = _match(field, city)
         if station is None:
             return {"error": f"города {city} нет среди кандидатов от {limits['home']}"}
@@ -493,28 +451,13 @@ def _toolbox(context: dict[str, Any], carry: dict[str, Any]):
         context["code"] = station["code"]
         return {"city": station["name"], "reachable": True, **card}
 
-    async def stay_plan(city: str, nights: int) -> dict[str, Any]:
-        limits = _params(context)
-        field = await build_field(limits["home"], limits["date"])
-        station = _match(field, city)
-        if station is None:
-            return {"error": f"города {city} нет среди кандидатов"}
-        context["nights"] = nights
-        candidates = [r for r in station["out"] if r[0] >= limits["not_before"]]
-        out_ride = min(candidates, key=lambda r: r[1]) if candidates else None
-        stay = await _stay_plan(
-            station["code"], limits["date"], nights, limits["deadline"], out_ride
-        )
-        carry["stay"] = stay
-        return stay
-
     async def escape(city: str) -> dict[str, Any]:
         limits = _params(context)
-        field = await build_field(limits["home"], limits["date"])
+        field = await build_field(limits["home"], limits["date"], limits["back_date"])
         station = _match(field, city)
         if station is None:
             return {"error": f"города {city} нет среди кандидатов"}
-        result = await _escape(station["code"], limits["date"])
+        result = await _escape(station["code"], limits["date"], limits["back_date"])
         carry["escape"] = result
         return result
 
@@ -522,7 +465,6 @@ def _toolbox(context: dict[str, Any], carry: dict[str, Any]):
         "set_params": set_params,
         "list_options": list_options,
         "plan_station": plan_station,
-        "stay_plan": stay_plan,
         "escape": escape,
     }
 
@@ -544,7 +486,7 @@ def _chips_from(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str,
         "min_ground": "min_ground",
         "max_ground": "max_ground",
         "budget": "budget",
-        "nights": "nights",
+        "back_date": "back_date",
         "date": "date",
     }
     chips: list[dict[str, Any]] = []
@@ -578,7 +520,7 @@ async def api_chat(request: Request) -> dict[str, Any]:
             run = await runner.run(text, summary, tools)
             after = _params(context)
             plan = carry.get("plan")
-            ranked = _rank(await build_field(after["home"], after["date"]), after)
+            ranked = _rank(await build_field(after["home"], after["date"], after["back_date"]), after)
             if plan is None and ranked:
                 ground, station, answer = ranked[0]
                 plan = {"name": station["name"], "code": station["code"], **_ride_card(station, answer)}
@@ -612,7 +554,7 @@ async def api_chat(request: Request) -> dict[str, Any]:
             context["date"] = next_day(context.get("date") or today())
 
     after = _params(context)
-    ranked = _rank(await build_field(after["home"], after["date"]), after)
+    ranked = _rank(await build_field(after["home"], after["date"], after["back_date"]), after)
     chosen = None
     if context.get("code"):
         chosen = next((item for item in ranked if item[1]["code"] == context["code"]), None)

@@ -12,6 +12,7 @@ import asyncio
 import json
 import math
 import time
+from datetime import date as date_type
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,11 @@ MAX_PAGES = 10
 CEILING = PAGE_SIZE * MAX_PAGES
 CACHE_DIR = Path(__file__).resolve().parents[3] / "var" / "cache"
 CACHE_TTL = 12 * 3600
+
+
+def _days_between(start: str, end: str) -> int:
+    """Сутки между датами. / Whole days between two dates."""
+    return (date_type.fromisoformat(end) - date_type.fromisoformat(start)).days
 
 
 def _cache_path(origin: str, destination: str, date: str) -> Path:
@@ -112,13 +118,21 @@ async def fetch_leg(mcp: TutuMcp, origin: str, destination: str, date: str) -> d
 
 
 async def fetch_station_field(
-    mcp: TutuMcp, home: str, station: Station, date: str
+    mcp: TutuMcp, home: str, station: Station, date: str, back_date: str | None = None
 ) -> dict[str, Any]:
-    """Поле одной станции: туда и обратно. / One station field: there and back."""
+    """Поле одной станции: туда на дату отъезда, обратно на дату возвращения.
+
+    RU: Обратные рейсы сдвигаются на число суток между датами, поэтому ось минут остаётся
+        единой и сравнение с дедлайном не зависит от календаря.
+    EN: Return rides are shifted by the number of days between the dates, so the minute axis
+        stays single and the deadline comparison never depends on the calendar.
+    """
+    back_date = back_date or date
+    offset = _days_between(date, back_date) * 24 * 60
     try:
         there, back = await asyncio.gather(
             fetch_leg(mcp, home, station.name, date),
-            fetch_leg(mcp, station.name, home, date),
+            fetch_leg(mcp, station.name, home, back_date),
         )
     except Exception as exc:
         return {
@@ -133,7 +147,9 @@ async def fetch_station_field(
             "error": str(exc)[:120],
         }
 
-    back_rides = sorted(back["rides"], key=lambda r: r[1])
+    back_rides = sorted(
+        ([r[0] + offset, r[1] + offset, *r[2:]] for r in back["rides"]), key=lambda r: r[1]
+    )
     window = "complete"
     for state in (there["window"], back["window"]):
         if state == "truncated":

@@ -30,7 +30,8 @@ SYSTEM = """Ты помощник в продукте «Обратно». Про
    ночёвки), сначала вызови set_params, затем пересчитай.
 3. Чтобы выбрать город, вызови list_options и опирайся на его ответ.
 4. Выбрав город, обязательно вызови plan_station по нему: без этого маршрута нет.
-   Для ночёвки вызывай stay_plan, если вернуться нельзя, вызови escape.
+   Если поездка с ночёвкой, ставь дату возвращения в set_params, а не считай ночи.
+   Если вернуться нельзя или нужен ночлег, вызови escape.
 5. Ответ пользователю — одна или две короткие фразы на русском, без списков и без markdown.
    Подробности он видит в карточке маршрута, дублировать их не нужно."""
 
@@ -50,7 +51,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "budget": {"type": "integer", "description": "потолок за оба билета, рубли"},
                     "budget_min": {"type": "integer", "description": "нижняя граница, рубли"},
                     "date": {"type": "string", "description": "дата отъезда YYYY-MM-DD"},
-                    "nights": {"type": "integer", "description": "сколько ночей остаться"},
+                    "back_date": {"type": "string", "description": "дата возвращения YYYY-MM-DD"},
                 },
             },
         },
@@ -81,20 +82,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "stay_plan",
-            "description": "План с ночёвкой: обратный рейс в день отъезда и отели на весь период.",
-            "parameters": {
-                "type": "object",
-                "properties": {"city": {"type": "string"}, "nights": {"type": "integer"}},
-                "required": ["city", "nights"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "escape",
-            "description": "Лестница спасения: отели у станции, автобусы, оценка такси.",
+            "description": "Отели у станции на выбранные даты, автобусы и оценка такси.",
             "parameters": {
                 "type": "object",
                 "properties": {"city": {"type": "string"}},
