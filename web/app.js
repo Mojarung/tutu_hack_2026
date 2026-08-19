@@ -175,15 +175,6 @@ function repaintAll() {
   );
   const node = $('reachable');
   if (node) node.textContent = String(reachable);
-  gsap.to(counterTween, {
-    v: reachable,
-    duration: 0.4,
-    ease: 'power1.out',
-    onUpdate: () => {
-      const node = $('reachable');
-      if (node) node.textContent = String(Math.round(counterTween.v));
-    },
-  });
   if (state.selected) openCard(state.selected, true);
 }
 
