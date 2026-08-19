@@ -15,6 +15,8 @@ const RAMP = [
   [420, [31, 138, 91]],
 ];
 const DEAD = [195, 198, 210];
+const GROUND_MAX = 2880;
+const PRICE_MAX = 50000;
 
 const state = {
   home: 'Москва',
@@ -23,9 +25,9 @@ const state = {
   notBefore: 8 * 60,
   deadline: 22 * 60,
   groundMin: 0,
-  groundMax: 720,
+  groundMax: GROUND_MAX,
   budgetMin: 0,
-  budgetMax: 3000,
+  budgetMax: PRICE_MAX,
   nights: 0,
   stations: new Map(),
   markers: new Map(),
@@ -78,10 +80,10 @@ function solve(out, back, deadline, limits) {
 function limits() {
   return {
     groundMin: state.groundMin,
-    groundMax: state.groundMax >= 720 ? Infinity : state.groundMax,
+    groundMax: state.groundMax >= GROUND_MAX ? Infinity : state.groundMax,
     notBefore: state.notBefore,
     priceMin: state.budgetMin,
-    priceMax: state.budgetMax >= 3000 ? Infinity : state.budgetMax,
+    priceMax: state.budgetMax >= PRICE_MAX ? Infinity : state.budgetMax,
   };
 }
 
@@ -224,18 +226,20 @@ function dualRange(hostId, labelId, format, onChange) {
   sync();
 }
 
+const rub = (value) => value.toLocaleString('ru-RU') + ' ₽';
+
 function groundLabel(low, high) {
-  if (low === 0 && high >= 720) return 'любое время';
-  if (high >= 720) return 'от ' + fmtDur(low);
+  if (low === 0 && high >= GROUND_MAX) return 'любое время';
+  if (high >= GROUND_MAX) return 'от ' + fmtDur(low);
   if (low === 0) return 'до ' + fmtDur(high);
   return fmtDur(low) + ' — ' + fmtDur(high);
 }
 
 function budgetLabel(low, high) {
-  if (low === 0 && high >= 3000) return 'любые';
-  if (high >= 3000) return 'от ' + low + ' ₽';
-  if (low === 0) return 'до ' + high + ' ₽';
-  return low + ' — ' + high + ' ₽';
+  if (low === 0 && high >= PRICE_MAX) return 'любые';
+  if (high >= PRICE_MAX) return 'от ' + rub(low);
+  if (low === 0) return 'до ' + rub(high);
+  return rub(low) + ' — ' + rub(high);
 }
 
 /* ---------- выбор города / city picker ---------- */
@@ -376,8 +380,8 @@ async function loadStay(code) {
   const url =
     `/api/plan?code=${code}&date=${state.date}&deadline=${state.deadline}` +
     `&not_before=${state.notBefore}&nights=${state.nights}&min_ground=${state.groundMin}` +
-    `&max_ground=${state.groundMax >= 720 ? 0 : state.groundMax}` +
-    `&budget=${state.budgetMax >= 3000 ? 0 : state.budgetMax}&budget_min=${state.budgetMin}` +
+    `&max_ground=${state.groundMax >= GROUND_MAX ? 0 : state.groundMax}` +
+    `&budget=${state.budgetMax >= PRICE_MAX ? 0 : state.budgetMax}&budget_min=${state.budgetMin}` +
     `&home=${encodeURIComponent(state.home)}`;
   const res = await fetch(url).then((r) => r.json());
   const stay = res.stay;
@@ -506,9 +510,9 @@ $('ask').addEventListener('submit', async (e) => {
     date: state.date,
     deadline: state.deadline,
     min_ground: state.groundMin,
-    max_ground: state.groundMax >= 720 ? 0 : state.groundMax,
+    max_ground: state.groundMax >= GROUND_MAX ? 0 : state.groundMax,
     not_before: state.notBefore,
-    budget: state.budgetMax >= 3000 ? 0 : state.budgetMax,
+    budget: state.budgetMax >= PRICE_MAX ? 0 : state.budgetMax,
     budget_min: state.budgetMin,
   };
   const res = await fetch('/api/chat', {
@@ -647,6 +651,34 @@ async function start() {
   if (homeBy >= 24 * 60) returnDate.setDate(returnDate.getDate() + 1);
   $('gate-rdate').value = returnDate.toISOString().slice(0, 10);
   $('gate-city-name').textContent = state.home;
+
+  /* RU: Одно нажатие открывает и дату, и время: сначала календарь, следом часы.
+     EN: One tap opens both the date and the time pickers in sequence. */
+  const chainPickers = (dateId, timeId) => {
+    const dateInput = $(dateId);
+    const timeInput = $(timeId);
+    const show = (node) => {
+      node.focus();
+      if (typeof node.showPicker === 'function') {
+        try {
+          node.showPicker();
+        } catch {
+          /* браузер откроет по фокусу / the browser opens it on focus */
+        }
+      }
+    };
+    dateInput.closest('.pill').addEventListener('click', (event) => {
+      if (event.target === timeInput) return;
+      show(dateInput);
+    });
+    dateInput.addEventListener('change', () => show(timeInput));
+    timeInput.addEventListener('click', (event) => {
+      event.stopPropagation();
+      show(timeInput);
+    });
+  };
+  chainPickers('gate-date', 'gate-dtime');
+  chainPickers('gate-rdate', 'gate-time');
 
   const pickCity = (city) => {
     state.home = city.name;
