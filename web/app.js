@@ -702,15 +702,20 @@ async function start() {
     if (deadline < MIN_DEADLINE) deadline += 24 * 60;
     setDeadline(deadline, false);
     renderDates();
+    /* RU: Поиск не должен зависеть от колбэка анимации: тикер может быть заморожен.
+       EN: The search must not hang on an animation callback, the ticker can be frozen. */
+    loadField();
     gsap.to($('gate'), {
       opacity: 0,
       duration: 0.4,
       ease: 'power2.out',
       onComplete: () => {
         $('gate').hidden = true;
-        loadField();
       },
     });
+    setTimeout(() => {
+      $('gate').hidden = true;
+    }, 600);
   };
   $('gate-go').addEventListener('click', startSearch);
   if (new URLSearchParams(location.search).has('go')) startSearch();
