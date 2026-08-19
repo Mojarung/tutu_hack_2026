@@ -671,6 +671,16 @@ async function start() {
     renderDates();
     loadField();
   });
+  /* RU: По умолчанию дедлайн — через четыре часа, иначе вечером карта пуста и выглядит сломанной.
+     EN: Default deadline is four hours out, otherwise a late evening map looks broken. */
+  const now = new Date();
+  const suggested = Math.min(
+    MAX_DEADLINE,
+    Math.max(MIN_DEADLINE + 120, Math.round((now.getHours() * 60 + now.getMinutes() + 240) / 15) * 15),
+  );
+  setDeadline(suggested, false);
+  $('gate-time').value = `${pad(Math.floor(suggested / 60) % 24)}:${pad(suggested % 60)}`;
+
   const gateHome = $('gate-home');
   gateHome.innerHTML = select.innerHTML;
   gateHome.value = select.value;
