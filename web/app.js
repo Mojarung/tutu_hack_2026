@@ -173,6 +173,8 @@ function repaintAll() {
   $('counter-total').textContent = String(
     [...state.stations.values()].filter((item) => !item.isHome).length,
   );
+  const node = $('reachable');
+  if (node) node.textContent = String(reachable);
   gsap.to(counterTween, {
     v: reachable,
     duration: 0.4,
