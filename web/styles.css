@@ -317,3 +317,13 @@ html, body {
   color: var(--brand); letter-spacing: 0.06em;
 }
 .picker-close { justify-content: center; flex: none; }
+
+/* Рейс целиком: время, транспорт, станции. */
+.leg { padding: 12px 0; border-top: 1px solid var(--hairline); }
+.leg-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.leg-top .k { font: 500 13px/1 Onest, sans-serif; color: var(--ink-soft); }
+.leg-top .v { font: 600 17px/1 Onest, sans-serif; }
+.leg-mid { margin-top: 6px; font: 600 13px/1.2 Onest, sans-serif; color: var(--brand); }
+.leg-route { margin-top: 4px; font: 500 12px/1.35 Onest, sans-serif; color: var(--ink-soft); }
+.buy { width: 100%; margin-top: 14px; justify-content: center; text-decoration: none;
+       background: var(--brand); border-color: var(--brand); color: #fff; }

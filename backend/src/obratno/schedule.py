@@ -27,7 +27,7 @@ CACHE_TTL = 12 * 3600
 
 
 def _cache_path(origin: str, destination: str, date: str) -> Path:
-    key = f"v2__{origin}__{destination}__{date}".replace(" ", "_").replace("/", "-")
+    key = f"v3__{origin}__{destination}__{date}".replace(" ", "_").replace("/", "-")
     return CACHE_DIR / f"{key}.json"
 
 
@@ -78,8 +78,8 @@ async def fetch_leg(mcp: TutuMcp, origin: str, destination: str, date: str) -> d
     else:
         ok = True
 
-    rides: list[list[int]] = []
-    from_name = to_name = None
+    rides: list[list] = []
+    from_name = to_name = checkout = None
     for offer in offers:
         try:
             dep = to_minutes(offer["departure_at"], date)
@@ -87,11 +87,13 @@ async def fetch_leg(mcp: TutuMcp, origin: str, destination: str, date: str) -> d
         except Exception:
             continue
         price = round(float((offer.get("price") or {}).get("amount") or 0))
-        rides.append([dep, arr, price])
+        leg = (offer.get("legs") or [{}])[0]
+        segment = (leg.get("segments") or [{}])[0]
+        vehicle = (segment.get("vehicle_meta") or {}).get("name") or "Электричка"
+        rides.append([dep, arr, price, segment.get("voyage_no") or "", vehicle])
         if from_name is None:
-            leg = (offer.get("legs") or [{}])[0]
-            segment = (leg.get("segments") or [{}])[0]
             from_name, to_name = segment.get("from"), segment.get("to")
+            checkout = offer.get("checkout_url")
 
     rides.sort(key=lambda r: r[0])
     window = "complete" if (total <= CEILING and ok) else ("truncated" if total > CEILING else "partial")
@@ -101,6 +103,7 @@ async def fetch_leg(mcp: TutuMcp, origin: str, destination: str, date: str) -> d
         "window": window,
         "from_name": from_name,
         "to_name": to_name,
+        "checkout_url": checkout,
         "fetched_at": int(time.time()),
     }
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -153,5 +156,9 @@ async def fetch_station_field(
         "window": window,
         "from_name": there["from_name"],
         "to_name": there["to_name"],
+        "checkout_url": there.get("checkout_url"),
+        "back_from_name": back["from_name"],
+        "back_to_name": back["to_name"],
+        "back_checkout_url": back.get("checkout_url"),
         "fetched_at": there["fetched_at"],
     }

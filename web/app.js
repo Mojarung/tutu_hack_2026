@@ -316,6 +316,29 @@ function renderBudget() {
 }
 
 /* ---------- карточка обрыва / cliff card ---------- */
+/** RU: Строка рейса: транспорт, номер, станции, цена — всё из ответа Tutu.
+ *  EN: One leg line: vehicle, number, stations, price, all from the Tutu response. */
+function legRow(title, ride, from, to) {
+  if (!ride) return '';
+  const [dep, arr, price = 0, voyage = '', vehicle = 'Электричка'] = ride;
+  return `
+    <div class="leg">
+      <div class="leg-top"><span class="k">${title}</span><span class="v">${fmt(dep)} → ${fmt(arr)}</span></div>
+      <div class="leg-mid">${vehicle}${voyage ? ` ${voyage}` : ''}${price ? ` · ${price} ₽` : ''}</div>
+      <div class="leg-route">${from || 'Tutu не вернул станцию'} → ${to || ''}</div>
+    </div>`;
+}
+
+function planLegRow(title, leg) {
+  if (!leg) return '';
+  return `
+    <div class="leg">
+      <div class="leg-top"><span class="k">${title}</span><span class="v">${leg.dep} → ${leg.arr}</span></div>
+      <div class="leg-mid">${leg.vehicle}${leg.voyage ? ` ${leg.voyage}` : ''}${leg.price ? ` · ${leg.price} ₽` : ''} · ${leg.duration}</div>
+      <div class="leg-route">${leg.from || 'Tutu не вернул станцию'} → ${leg.to || ''}</div>
+    </div>`;
+}
+
 async function openCard(code, silent = false) {
   state.selected = code;
   const data = state.stations.get(code);
@@ -339,10 +362,11 @@ async function openCard(code, silent = false) {
         <span class="k">часов на земле</span>
         <div class="big">${fmtDur(answer.ground)}</div>
       </div>
-      <div class="row"><span class="k">быть на платформе</span><span class="v big" style="font-size:1.6rem">${fmt(answer.backDep)}</span></div>
-      <div class="row"><span class="k">дома</span><span class="v">${fmt(answer.backArr)}</span></div>
-      <div class="row"><span class="k">туда</span><span class="v">${fmt(answer.outDep)} → ${fmt(answer.outArr)}</span></div>
-      ${buffer.map((r) => `<div class="row"><span class="k">запас</span><span class="v">${fmt(r[0])} → ${fmt(r[1])}</span></div>`).join('')}
+      ${legRow('туда', data.out.find((r) => r[0] === answer.outDep && r[1] === answer.outArr), data.from_name, data.to_name)}
+      ${legRow('обратно, последняя', data.back.find((r) => r[0] === answer.backDep && r[1] === answer.backArr), data.back_from_name, data.back_to_name)}
+      ${buffer.map((r) => legRow('запас', r, data.back_from_name, data.back_to_name)).join('')}
+      <div class="row"><span class="k">билеты туда-обратно</span><span class="v">${answer.price || 0} ₽</span></div>
+      ${data.checkout_url ? `<a class="pill buy" href="${data.checkout_url}" target="_blank" rel="noopener">расписание и покупка на Tutu</a>` : ''}
       ${truncated ? `<div class="warn">Tutu отдаёт первые 300 рейсов, дальше ${fmt(lastBack)} расписания нет</div>` : ''}
       <p class="muted" style="margin-top:14px">Обратных рейсов в ответе: ${data.back.length} из ${data.back_total ?? data.back.length}</p>`;
   } else {
@@ -478,10 +502,11 @@ function showChatPlan(res) {
     <h2>${plan.name}</h2>
     <p class="sub">${res.reply}</p>
     <div class="hero"><span class="k">часов на земле</span><div class="big">${plan.ground_label}</div></div>
-    <div class="row"><span class="k">туда</span><span class="v">${plan.out.dep} → ${plan.out.arr}</span></div>
-    <div class="row"><span class="k">быть на платформе</span><span class="v">${plan.back.dep}</span></div>
-    <div class="row"><span class="k">дома</span><span class="v">${plan.back.arr}</span></div>
-    ${plan.buffer.map((r) => `<div class="row"><span class="k">запас</span><span class="v">${r.dep} → ${r.arr}</span></div>`).join('')}
+    ${planLegRow('туда', plan.out)}
+    ${planLegRow('обратно, последняя', plan.back)}
+    ${plan.buffer.map((r) => planLegRow('запас', r)).join('')}
+    <div class="row"><span class="k">билеты туда-обратно</span><span class="v">${plan.price_total || 0} ₽</span></div>
+    ${plan.checkout_url ? `<a class="pill buy" href="${plan.checkout_url}" target="_blank" rel="noopener">расписание и покупка на Tutu</a>` : ''}
     ${res.options.length ? `<p class="sub" style="margin:16px 0 6px">ещё варианты</p><div class="pill-group" id="opts"></div>` : ''}
     <p class="muted" style="margin-top:14px">Напишите правку в строке снизу: «хочу подольше», «дома к 23:00», «во Владимир».</p>`;
   if (res.options.length) {

@@ -169,16 +169,40 @@ def _find(field: list[dict[str, Any]], code: str) -> dict[str, Any] | None:
     return next((s for s in field if s["code"] == code), None)
 
 
+def _leg(ride: list, from_name: str | None, to_name: str | None) -> dict[str, Any]:
+    """Полный рейс: время, транспорт, номер, цена, станции. / A full leg as Tutu returned it."""
+    return {
+        "dep": fmt(ride[0]),
+        "arr": fmt(ride[1]),
+        "duration": fmt_duration(ride[1] - ride[0]),
+        "price": ride[2] if len(ride) > 2 else None,
+        "voyage": ride[3] if len(ride) > 3 else "",
+        "vehicle": ride[4] if len(ride) > 4 else "Электричка",
+        "from": from_name,
+        "to": to_name,
+    }
+
+
 def _ride_card(station: dict[str, Any], answer: Solution) -> dict[str, Any]:
     previous = sorted(
         [r for r in station["back"] if r[0] < answer.back_dep], key=lambda r: r[0], reverse=True
     )[:2]
+    out_ride = next(
+        (r for r in station["out"] if r[0] == answer.out_dep and r[1] == answer.out_arr), []
+    )
+    back_ride = next(
+        (r for r in station["back"] if r[0] == answer.back_dep and r[1] == answer.back_arr), []
+    )
     return {
         "ground": answer.ground,
         "ground_label": fmt_duration(answer.ground),
-        "out": {"dep": fmt(answer.out_dep), "arr": fmt(answer.out_arr)},
-        "back": {"dep": fmt(answer.back_dep), "arr": fmt(answer.back_arr)},
-        "buffer": [{"dep": fmt(r[0]), "arr": fmt(r[1])} for r in previous],
+        "out": _leg(out_ride, station.get("from_name"), station.get("to_name")),
+        "back": _leg(back_ride, station.get("back_from_name"), station.get("back_to_name")),
+        "buffer": [_leg(r, station.get("back_from_name"), station.get("back_to_name")) for r in previous],
+        "price_total": (out_ride[2] if len(out_ride) > 2 else 0)
+        + (back_ride[2] if len(back_ride) > 2 else 0),
+        "checkout_url": station.get("checkout_url"),
+        "back_checkout_url": station.get("back_checkout_url"),
         "from_name": station.get("from_name"),
         "to_name": station.get("to_name"),
     }
