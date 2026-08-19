@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import chips as chips_module
+from . import cities as cities_module
 from .ground import MSK, Solution, fmt, fmt_duration, next_day, solve
 from .mcp_client import TutuMcp
 from .schedule import fetch_leg, fetch_station_field
@@ -66,7 +67,10 @@ async def build_field(home: str, date: str) -> list[dict[str, Any]]:
     if key in _fields:
         return _fields[key]
     results = await asyncio.gather(
-        *[fetch_station_field(mcp(), home, station, date) for station in STATIONS]
+        *[
+            fetch_station_field(mcp(), home, station, date)
+            for station in cities_module.destinations(home)
+        ]
     )
     _fields[key] = list(results)
     return _fields[key]
@@ -89,14 +93,35 @@ async def no_store(request: Request, call_next):
 
 
 @app.get("/api/stations")
-async def api_stations() -> dict[str, Any]:
+async def api_stations(home: str = HOME_DEFAULT) -> dict[str, Any]:
+    """Точка отправления и кандидаты для неё. / The origin and its candidates."""
+    origin = cities_module.find(home)
     return {
-        "home": {"name": HOME_DEFAULT, "lat": HOME_LAT, "lon": HOME_LON},
+        "home": {
+            "name": home,
+            "lat": origin["lat"] if origin else HOME_LAT,
+            "lon": origin["lon"] if origin else HOME_LON,
+        },
         "stations": [
             {"code": s.code, "name": s.name, "lat": s.lat, "lon": s.lon, "line": s.line}
-            for s in STATIONS
+            for s in cities_module.destinations(home)
         ],
         "today": today(),
+    }
+
+
+@app.get("/api/cities")
+async def api_cities(q: str = "", limit: int = 60) -> dict[str, Any]:
+    """Города России по алфавиту с поиском по названию. / Russian cities, searchable."""
+    found = cities_module.search(q, limit)
+    if not q.strip():
+        found = sorted(found, key=lambda c: c["name"])
+    return {
+        "cities": [
+            {"name": c["name"], "region": c["region"], "lat": c["lat"], "lon": c["lon"]}
+            for c in found
+        ],
+        "total": len(cities_module.all_cities()),
     }
 
 
@@ -121,7 +146,7 @@ async def api_field_stream(home: str = HOME_DEFAULT, date: str = "") -> Streamin
         collected: list[dict[str, Any]] = []
         tasks = [
             asyncio.create_task(fetch_station_field(mcp(), home, station, target))
-            for station in STATIONS
+            for station in cities_module.destinations(home)
         ]
         for task in asyncio.as_completed(tasks):
             item = await task
@@ -131,6 +156,13 @@ async def api_field_stream(home: str = HOME_DEFAULT, date: str = "") -> Streamin
         yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+def _station_by_code(code: str, home: str):
+    found = BY_CODE.get(code)
+    if found:
+        return found
+    return next(s for s in cities_module.destinations(home) if s.code == code)
 
 
 def _find(field: list[dict[str, Any]], code: str) -> dict[str, Any] | None:
@@ -163,7 +195,7 @@ def _km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 async def _escape(code: str, date: str) -> dict[str, Any]:
     """Лестница спасения: одно честное состояние. / Escape ladder: one honest state."""
-    station = BY_CODE[code]
+    station = _station_by_code(code, HOME_DEFAULT)
     hotels: list[dict[str, Any]] = []
     buses = 0
     try:

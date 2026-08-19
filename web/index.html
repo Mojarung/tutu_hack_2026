@@ -15,10 +15,9 @@
 
 <header class="hud hud-top">
   <div class="cluster">
-    <label class="pill pill-home">
-      <span class="dot-home"></span>
-      <select id="home-select" aria-label="Откуда"></select>
-    </label>
+    <button class="pill pill-home" id="home-btn" type="button">
+      <span class="dot-home"></span><span id="home-name">Москва</span>
+    </button>
     <div class="pill-group" id="dates"></div>
     <label class="pill pill-date">
       <input id="date-input" type="date" aria-label="Дата" />
@@ -73,12 +72,26 @@
   <div class="gate-card">
     <h1 class="gate-title">Обратно</h1>
     <p class="gate-sub">карта времени на земле</p>
-    <label class="pill gate-field"><span class="gate-k">откуда</span><select id="gate-home"></select></label>
-    <label class="pill gate-field"><span class="gate-k">дата отъезда</span><input id="gate-date" type="date" /></label>
-    <label class="pill gate-field"><span class="gate-k">дома к</span><input id="gate-time" type="time" value="22:00" step="300" /></label>
+    <button class="pill gate-field" id="gate-city" type="button">
+      <span class="gate-k">откуда</span><span id="gate-city-name">Москва</span>
+    </button>
+    <label class="pill gate-field"><span class="gate-k">отъезд</span>
+      <span class="gate-pair"><input id="gate-date" type="date" /><input id="gate-dtime" type="time" value="08:00" step="300" /></span>
+    </label>
+    <label class="pill gate-field"><span class="gate-k">дома</span>
+      <span class="gate-pair"><input id="gate-rdate" type="date" /><input id="gate-time" type="time" value="22:00" step="300" /></span>
+    </label>
     <button class="pill gate-go" id="gate-go" type="button">искать</button>
   </div>
 </section>
+
+<div class="picker" id="picker" hidden>
+  <div class="picker-card">
+    <input id="picker-input" type="search" autocomplete="off" placeholder="поиск города" />
+    <div class="picker-list" id="picker-list"></div>
+    <button class="pill picker-close" id="picker-close" type="button">закрыть</button>
+  </div>
+</div>
 
 <div class="boot" id="boot"><span id="boot-text">веер расписаний</span></div>
 

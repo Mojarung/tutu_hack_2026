@@ -7,8 +7,15 @@
 
 import * as maplibregl from './vendor/maplibre-gl.mjs';
 
-const MIN_DEADLINE = 12 * 60;
-const MAX_DEADLINE = 27 * 60;
+let MIN_DEADLINE = 12 * 60;
+let MAX_DEADLINE = 27 * 60;
+
+/** RU: Циферблат живёт между «через час после отъезда» и «сутки спустя».
+ *  EN: The dial spans from an hour after departure to a full day later. */
+function setDialRange(departureMinutes) {
+  MIN_DEADLINE = departureMinutes + 60;
+  MAX_DEADLINE = departureMinutes + 24 * 60;
+}
 const RAMP = [
   [0, [232, 115, 74]],
   [90, [232, 169, 60]],
@@ -547,6 +554,58 @@ function applyChips(chips) {
   else repaintAll();
 }
 
+/* ---------- выбор города / city picker ---------- */
+let pickTarget = null;
+
+async function renderPicker(query) {
+  const res = await fetch(`/api/cities?q=${encodeURIComponent(query)}&limit=80`).then((r) => r.json());
+  const list = $('picker-list');
+  list.innerHTML = '';
+  let letter = '';
+  res.cities.forEach((city) => {
+    const first = city.name[0].toUpperCase();
+    if (first !== letter) {
+      letter = first;
+      const head = document.createElement('div');
+      head.className = 'picker-letter';
+      head.textContent = letter;
+      list.appendChild(head);
+    }
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'picker-row';
+    row.innerHTML = `${city.name}<span>${city.region}</span>`;
+    row.addEventListener('click', () => {
+      if (pickTarget) pickTarget(city);
+      closePicker();
+    });
+    list.appendChild(row);
+  });
+}
+
+function openPicker(onPick) {
+  pickTarget = onPick;
+  $('picker').hidden = false;
+  $('picker-input').value = '';
+  renderPicker('');
+  $('picker-input').focus();
+}
+
+function closePicker() {
+  $('picker').hidden = true;
+  pickTarget = null;
+}
+
+$('picker-close').addEventListener('click', closePicker);
+$('picker').addEventListener('click', (e) => {
+  if (e.target === $('picker')) closePicker();
+});
+let pickTimer = null;
+$('picker-input').addEventListener('input', (e) => {
+  clearTimeout(pickTimer);
+  pickTimer = setTimeout(() => renderPicker(e.target.value), 140);
+});
+
 /* ---------- загрузка / loading ---------- */
 function boot(text) {
   const el = $('boot');
@@ -559,15 +618,6 @@ function boot(text) {
 }
 
 /** RU: Для сегодняшней даты прошедшие отправления не считаются. / EN: past departures ignored. */
-function refreshNotBefore() {
-  if (state.date !== state.today) {
-    state.notBefore = 0;
-    return;
-  }
-  const now = new Date();
-  state.notBefore = now.getHours() * 60 + now.getMinutes();
-}
-
 /** RU: Один веер за раз: прошлый поток закрывается, иначе два ответа перезаписывают друг друга.
  *  EN: One fan at a time: the previous stream is closed, else two answers overwrite each other. */
 let fieldStream = null;
@@ -587,7 +637,6 @@ function resetField() {
 }
 
 function loadField() {
-  refreshNotBefore();
   if (fieldStream) fieldStream.close();
   resetField();
   boot('веер расписаний');
@@ -619,37 +668,61 @@ function loadField() {
   };
 }
 
-async function start() {
-  const meta = await fetch('/api/stations').then((r) => r.json());
-  state.today = meta.today;
-  state.date = meta.today;
-  state.home = meta.home.name;
+let homeMarker = null;
+
+/** RU: Кандидаты зависят от точки отправления, поэтому шайбы пересобираются.
+ *  EN: Candidates depend on the origin, so the pucks are rebuilt. */
+async function loadStations(home) {
+  const meta = await fetch(`/api/stations?home=${encodeURIComponent(home)}`).then((r) => r.json());
+  state.markers.forEach((puck) => puck.marker.remove());
+  state.markers.clear();
+  state.stations.clear();
   meta.stations.forEach((station) => {
     state.stations.set(station.code, station);
     state.markers.set(station.code, buildPuck(station));
   });
-  new maplibregl.Marker({ color: '#16143c' }).setLngLat([meta.home.lon, meta.home.lat]).addTo(map);
-  const select = $('home-select');
-  select.innerHTML = '';
-  [{ name: meta.home.name }, ...meta.stations].forEach((item) => {
-    const option = document.createElement('option');
-    option.value = item.name;
-    option.textContent = item.name;
-    select.appendChild(option);
+  if (homeMarker) homeMarker.remove();
+  homeMarker = new maplibregl.Marker({ color: '#16143c' })
+    .setLngLat([meta.home.lon, meta.home.lat])
+    .addTo(map);
+  map.easeTo({ center: [meta.home.lon, meta.home.lat + 0.2], zoom: 7.1, duration: 600 });
+  $('home-name').textContent = home;
+  return meta;
+}
+
+async function start() {
+  const saved = localStorage.getItem('obratno.home') || 'Москва';
+  const meta = await loadStations(saved);
+  state.today = meta.today;
+  state.date = meta.today;
+  state.home = saved;
+  const now = new Date();
+  const departure = Math.min(20 * 60, Math.round((now.getHours() * 60 + now.getMinutes() + 45) / 15) * 15);
+  $('gate-date').value = state.date;
+  $('gate-date').min = state.today;
+  $('gate-rdate').value = state.date;
+  $('gate-rdate').min = state.today;
+  $('gate-dtime').value = `${pad(Math.floor(departure / 60))}:${pad(departure % 60)}`;
+  $('gate-city-name').textContent = state.home;
+
+  const pickCity = (city) => {
+    state.home = city.name;
+    localStorage.setItem('obratno.home', city.name);
+    $('gate-city-name').textContent = city.name;
+    $('home-name').textContent = city.name;
+  };
+  $('gate-city').addEventListener('click', () => openPicker(pickCity));
+  $('home-btn').addEventListener('click', () => {
+    openPicker(async (city) => {
+      pickCity(city);
+      await loadStations(city.name);
+      loadField();
+    });
   });
-  select.value = localStorage.getItem('obratno.home') || meta.home.name;
-  state.home = select.value;
-  select.addEventListener('change', () => {
-    state.home = select.value;
-    localStorage.setItem('obratno.home', state.home);
-    loadField();
-  });
+
   const dateInput = $('date-input');
   dateInput.value = state.date;
   dateInput.min = state.today;
-  dateInput.closest('.pill').addEventListener('click', () => {
-    if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
-  });
   dateInput.closest('.pill').addEventListener('click', () => {
     if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
   });
@@ -659,51 +732,35 @@ async function start() {
     renderDates();
     loadField();
   });
-  /* RU: По умолчанию дедлайн — через четыре часа, иначе вечером карта пуста и выглядит сломанной.
-     EN: Default deadline is four hours out, otherwise a late evening map looks broken. */
-  const now = new Date();
-  const suggested = Math.min(
-    MAX_DEADLINE,
-    Math.max(MIN_DEADLINE + 120, Math.round((now.getHours() * 60 + now.getMinutes() + 240) / 15) * 15),
-  );
-  setDeadline(suggested, false);
-  $('gate-time').value = `${pad(Math.floor(suggested / 60) % 24)}:${pad(suggested % 60)}`;
 
-  const gateHome = $('gate-home');
-  gateHome.innerHTML = select.innerHTML;
-  gateHome.value = select.value;
-  $('gate-date').value = state.date;
-  $('gate-date').min = state.today;
   renderDates();
   renderGround();
   renderBudget();
-  renderDial();
 
-  const startSearch = () => {
-    state.home = gateHome.value;
-    localStorage.setItem('obratno.home', state.home);
-    select.value = state.home;
+  const startSearch = async () => {
     state.date = $('gate-date').value || state.today;
     dateInput.value = state.date;
-    const [hh, mm] = ($('gate-time').value || '22:00').split(':').map(Number);
-    let deadline = hh * 60 + mm;
-    if (deadline < MIN_DEADLINE) deadline += 24 * 60;
+    const [dh, dm] = ($('gate-dtime').value || '08:00').split(':').map(Number);
+    const [ah, am] = ($('gate-time').value || '22:00').split(':').map(Number);
+    const days = Math.max(
+      0,
+      Math.round(
+        (new Date(`${$('gate-rdate').value || state.date}T00:00:00`) -
+          new Date(`${state.date}T00:00:00`)) / 86400000,
+      ),
+    );
+    state.notBefore = dh * 60 + dm;
+    setDialRange(state.notBefore);
+    let deadline = days * 24 * 60 + ah * 60 + am;
+    if (deadline <= state.notBefore) deadline += 24 * 60;
     setDeadline(deadline, false);
     renderDates();
-    /* RU: Поиск не должен зависеть от колбэка анимации: тикер может быть заморожен.
-       EN: The search must not hang on an animation callback, the ticker can be frozen. */
+    await loadStations(state.home);
     loadField();
-    gsap.to($('gate'), {
-      opacity: 0,
-      duration: 0.4,
-      ease: 'power2.out',
-      onComplete: () => {
-        $('gate').hidden = true;
-      },
-    });
+    gsap.to($('gate'), { opacity: 0, duration: 0.4, ease: 'power2.out' });
     setTimeout(() => {
       $('gate').hidden = true;
-    }, 600);
+    }, 420);
   };
   $('gate-go').addEventListener('click', startSearch);
   if (new URLSearchParams(location.search).has('go')) startSearch();
