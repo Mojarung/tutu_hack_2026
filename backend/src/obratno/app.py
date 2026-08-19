@@ -479,6 +479,13 @@ def answer_price(station: dict[str, Any], answer: Solution) -> int:
     return (out_ride[2] if len(out_ride) > 2 else 0) + (back_ride[2] if len(back_ride) > 2 else 0)
 
 
+def _plain_reply(plan: dict[str, Any] | None, ranked: list) -> str:
+    """Ответ из домена, когда модель не сформулировала. / Domain reply when the model stayed silent."""
+    if not plan:
+        return "По этим условиям вернуться неоткуда."
+    return f"{plan['name']}: {plan['ground_label']} на земле, последняя обратно {plan['back']['dep']}."
+
+
 def _chips_from(before: dict[str, Any], after: dict[str, Any]) -> list[dict[str, Any]]:
     """Что агент изменил — видно чипами. / What the agent changed, shown as chips."""
     mapping = {
@@ -528,7 +535,7 @@ async def api_chat(request: Request) -> dict[str, Any]:
                 "context": context,
                 "chips": _chips_from(before, after),
                 "source": "agent",
-                "reply": run.reply or "Готово.",
+                "reply": run.reply or _plain_reply(plan, ranked),
                 "plan": plan,
                 "options": [
                     {"code": item[1]["code"], "name": item[1]["name"], "ground": fmt_duration(item[0])}
